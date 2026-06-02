@@ -1,0 +1,29 @@
+name: goal1_paper_like
+seed: 20260601
+base: 10
+output_dir: data/generated
+write_parquet: true
+schema_version: goal1.v1
+splits:
+  train_probe: 0
+  dev_intervention: 100000
+  test_behavior: 200000
+  test_intervention: 300000
+digit_lengths: [2, 3, 4, 5, 8, 12, 16, 20]
+slices:
+  - no_carry
+  - isolated_carry
+  - long_carry_chain
+  - internal_carry_chain
+  - carry_distractor
+  - many_9s_no_carry
+prompt_modes:
+  - answer_only
+  - free_cot
+  - length_controlled_cot
+  - structured_column_cot
+digit_formats:
+  - plain
+  - delimited
+digit_delimiter: "|"
+examples_per_slice_per_length: 16

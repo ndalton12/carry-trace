@@ -1,0 +1,27 @@
+name: goal1_smoke_fake
+seed: 13
+dataset_path: data/generated/goal1_smoke/examples.jsonl
+output_dir: runs
+max_examples: 8
+prompt_modes:
+  - answer_only
+  - structured_column_cot
+digit_formats:
+  - plain
+  - delimited
+runner:
+  kind: fake
+  device: auto
+  dtype: auto
+  batch_size: 1
+  trust_remote_code: false
+models:
+  - name: olmo3-think-fake
+    model_id: allenai/Olmo-3-7B-Think
+  - name: olmo3-instruct-fake
+    model_id: allenai/Olmo-3-7B-Instruct
+generation:
+  max_new_tokens: 128
+  temperature: 0.0
+  top_p: 1.0
+  do_sample: false

@@ -10,3 +10,10 @@ wheels/
 .venv
 
 .env
+
+# Local experiment artifacts
+data/generated/
+runs/
+figures/
+.pytest_cache/
+.ruff_cache/

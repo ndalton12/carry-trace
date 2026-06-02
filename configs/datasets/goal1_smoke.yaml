@@ -1,0 +1,26 @@
+name: goal1_smoke
+seed: 13
+base: 10
+output_dir: data/generated
+write_parquet: true
+schema_version: goal1.v1
+splits:
+  smoke: 0
+digit_lengths: [2, 3]
+slices:
+  - no_carry
+  - isolated_carry
+  - long_carry_chain
+  - internal_carry_chain
+  - carry_distractor
+  - many_9s_no_carry
+prompt_modes:
+  - answer_only
+  - free_cot
+  - length_controlled_cot
+  - structured_column_cot
+digit_formats:
+  - plain
+  - delimited
+digit_delimiter: "|"
+examples_per_slice_per_length: 1

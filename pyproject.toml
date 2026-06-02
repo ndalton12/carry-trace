@@ -1,13 +1,43 @@
 [project]
 name = "carry-trace"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible arithmetic carry-trace experiments for reasoning models"
 readme = "README.md"
 authors = [
     { name = "ndalton12", email = "niall.dalton12@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "accelerate>=1.0.0",
+    "datasets>=3.0.0",
+    "matplotlib>=3.9.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "pyarrow>=17.0.0",
+    "pydantic>=2.9.0",
+    "pyyaml>=6.0.2",
+    "rich>=13.8.0",
+    "seaborn>=0.13.2",
+    "torch>=2.5.0",
+    "transformers>=4.45.0",
+    "typer>=0.12.5",
+]
+
+[project.scripts]
+carry-trace = "carry_trace.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.7.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
 
 [build-system]
 requires = ["hatchling"]
