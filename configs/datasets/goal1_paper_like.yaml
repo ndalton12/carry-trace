@@ -5,10 +5,14 @@ output_dir: data/generated
 write_parquet: true
 schema_version: goal1.v1
 splits:
-  train_probe: 0
-  dev_intervention: 100000
-  test_behavior: 200000
-  test_intervention: 300000
+  debug:
+    examples_per_slice_per_length: 4
+  train_probe:
+    examples_per_slice_per_length: 32
+  test_probe:
+    examples_per_slice_per_length: 8
+  test_behavior:
+    examples_per_slice_per_length: 32
 digit_lengths: [2, 3, 4, 5, 8, 12, 16, 20]
 slices:
   - no_carry
@@ -25,5 +29,8 @@ prompt_modes:
 digit_formats:
   - plain
   - delimited
+answer_formats:
+  - standard
+  - lsd_delimited
 digit_delimiter: "|"
-examples_per_slice_per_length: 16
+answer_delimiter: "|"

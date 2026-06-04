@@ -13,11 +13,19 @@ class PromptMode(StrEnum):
 
 
 class DigitFormat(StrEnum):
+    """Operand display formats used in rendered prompts."""
     PLAIN = "plain"
     DELIMITED = "delimited"
 
 
+class AnswerFormat(StrEnum):
+    """Expected answer emission formats used in rendered prompts."""
+    STANDARD = "standard"
+    LSD_DELIMITED = "lsd_delimited"
+
+
 class SliceName(StrEnum):
+    """Addition problem structure slices."""
     NO_CARRY = "no_carry"
     ISOLATED_CARRY = "isolated_carry"
     LONG_CARRY_CHAIN = "long_carry_chain"

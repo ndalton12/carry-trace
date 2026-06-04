@@ -2,8 +2,8 @@
 
 `carry-trace` uses YAML config files for datasets and experiment runs. Configs
 are validated before work starts. Fields with closed value sets use enums, so
-invalid slices, prompt modes, digit formats, runner kinds, and torch dtypes fail
-during config loading.
+invalid slices, prompt modes, digit formats, answer formats, runner kinds, and
+torch dtypes fail during config loading.
 
 ## Dataset Configs
 
@@ -23,13 +23,15 @@ output_dir: data/generated
 write_parquet: true
 schema_version: goal1.v1
 splits:
-  smoke: 0
+  smoke:
+    examples_per_slice_per_length: 1
 digit_lengths: [2, 3]
 slices: [no_carry, isolated_carry]
 prompt_modes: [answer_only, structured_column_cot]
 digit_formats: [plain, delimited]
+answer_formats: [standard, lsd_delimited]
 digit_delimiter: "|"
-examples_per_slice_per_length: 1
+answer_delimiter: "|"
 ```
 
 | Field | Type | Meaning |
@@ -40,24 +42,32 @@ examples_per_slice_per_length: 1
 | `output_dir` | path | Parent directory for generated dataset artifacts. |
 | `write_parquet` | boolean | Also write `examples.parquet` beside JSONL. |
 | `schema_version` | string | Saved row schema version. Keep `goal1.v1` for current runs. |
-| `splits` | map string to integer | Split names and seed offsets. |
+| `splits` | map string to split config | Split names and optional per-split generation settings. Split RNG seeds are derived from `seed` and split name. |
 | `digit_lengths` | list of integers | Operand digit lengths to generate. |
 | `slices` | list of `SliceName` | Addition structure slices to include. |
 | `prompt_modes` | list of `PromptMode` | Prompt styles crossed with each generated problem. |
 | `digit_formats` | list of `DigitFormat` | Operand display formats crossed with prompt modes. |
+| `answer_formats` | list of `AnswerFormat` | Expected answer emission formats crossed with prompt and digit formats. |
 | `digit_delimiter` | string | Delimiter used when `digit_format` is `delimited`. |
-| `examples_per_slice_per_length` | integer | Replicates per split, digit length, and slice before prompt and digit-format expansion. |
+| `answer_delimiter` | string | Delimiter used when `answer_format` is `lsd_delimited`. |
+| `examples_per_slice_per_length` | integer | Default replicates per split, digit length, and slice before prompt, digit-format, and answer-format expansion. |
+
+Split config fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `examples_per_slice_per_length` | integer or null | Optional split-specific replicate count. Falls back to the dataset-level default when omitted. |
 
 Allowed `SliceName` values:
 
 | Value | Meaning |
 | --- | --- |
-| `no_carry` | Columns are generated so no carry occurs. |
-| `isolated_carry` | Exactly one non-propagating carry. |
-| `long_carry_chain` | Carry propagates across all generated digits, e.g. `999 + 1`. |
-| `internal_carry_chain` | Carry starts inside the number rather than only at the final answer boundary. |
-| `carry_distractor` | Surface digits suggest carry-like difficulty but generated labels may have no carry. |
-| `many_9s_no_carry` | Many 9s without carry, useful for shortcut controls. |
+| `no_carry` | No column produces outgoing carry. |
+| `isolated_carry` | Exactly one carry-producing column, and it does not propagate. |
+| `long_carry_chain` | Carry propagates across all generated digits, e.g. `999 + 1`; often changes answer length. |
+| `internal_carry_chain` | Carry starts in low-order digits and stops before the most-significant digit, e.g. `1099 + 1`. |
+| `carry_distractor` | Alternating carry-suggestive surface pattern with some local carry activity but no long chain. |
+| `many_9s_no_carry` | Many 9s appear, but no column carries; useful as a shortcut-control slice. |
 | `random` | Unconstrained random operands. Mostly useful for debugging. |
 
 Allowed `PromptMode` values:
@@ -76,10 +86,34 @@ Allowed `DigitFormat` values:
 | `plain` | Show operands normally, e.g. `4879 + 2568`. |
 | `delimited` | Insert `digit_delimiter` between displayed digits, e.g. `4|8|7|9 + 2|5|6|8`. |
 
-`digit_format` is independent of `prompt_mode`: every selected prompt mode is
-crossed with every selected digit format. Arithmetic fields such as `a`, `b`,
-`answer`, digit arrays, and carry labels remain plain; rendered prompt operands
-are saved separately as `prompt_a` and `prompt_b`.
+Allowed `AnswerFormat` values:
+
+| Value | Meaning |
+| --- | --- |
+| `standard` | Ask for the conventional most-significant-first answer, e.g. `6912`. |
+| `lsd_delimited` | Ask for answer digits least-significant first with `answer_delimiter`, e.g. `2|1|9|6`. |
+
+`digit_format` and `answer_format` are independent of `prompt_mode`: every
+selected prompt mode is crossed with every selected digit format and answer
+format. Arithmetic fields such as `a`, `b`, `answer`, digit arrays, and carry
+labels remain canonical; rendered prompt operands are saved as `prompt_a` and
+`prompt_b`, and the requested emitted answer is saved as `expected_output`.
+
+Dataset rows also support optional Goal 3 matching metadata:
+
+| Field | Meaning |
+| --- | --- |
+| `problem_id` | Stable arithmetic-problem ID shared by rendered prompt variants. |
+| `match_group_id` | Stable ID for a matched intervention group. |
+| `match_role` | Role within a matched group, such as `clean`, `corrupt`, or `control`. |
+| `target_column_lsd` | Target column for a probe or intervention, with ones place as `0`. |
+| `intervention_variable` | Intended causal variable, such as `incoming_carry` or `outgoing_carry`. |
+| `match_family` | Matching design family, such as `carry_interchange`. |
+| `match_constraints` | JSON object describing held-fixed and varied constraints. |
+| `partner_problem_ids` | Other arithmetic problem IDs in the matched group. |
+
+Ordinary Goal 1 rows include `problem_id` but omit empty matching fields from
+JSONL and Parquet artifacts.
 
 ## Experiment Configs
 
@@ -97,8 +131,10 @@ seed: 13
 dataset_path: data/generated/goal1_smoke/examples.jsonl
 output_dir: runs
 max_examples: 8
+splits: [smoke]
 prompt_modes: [answer_only, structured_column_cot]
 digit_formats: [plain, delimited]
+answer_formats: [standard, lsd_delimited]
 runner:
   kind: fake
   device: auto
@@ -121,9 +157,11 @@ generation:
 | `seed` | integer | Generation seed passed to the runner. |
 | `dataset_path` | path | JSONL dataset produced by a dataset config. |
 | `output_dir` | path | Parent directory for run artifacts. |
-| `max_examples` | integer or null | Optional cap after filtering. |
+| `max_examples` | integer or null | Optional cap after filtering. When omitted, all filtered examples are used. |
+| `splits` | list of strings or null | Optional filter over dataset split names. |
 | `prompt_modes` | list of `PromptMode` or null | Optional filter over dataset prompt modes. |
 | `digit_formats` | list of `DigitFormat` or null | Optional filter over dataset digit formats. |
+| `answer_formats` | list of `AnswerFormat` or null | Optional filter over dataset answer formats. |
 | `runner` | object | Model execution backend settings. |
 | `models` | list of model specs | Checkpoints to run. |
 | `generation` | object | Hugging Face generation parameters saved with every call. |

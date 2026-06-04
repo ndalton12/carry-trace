@@ -3,12 +3,17 @@ seed: 13
 dataset_path: data/generated/goal1_smoke/examples.jsonl
 output_dir: runs
 max_examples: 8
+splits:
+  - smoke
 prompt_modes:
   - answer_only
   - structured_column_cot
 digit_formats:
   - plain
   - delimited
+answer_formats:
+  - standard
+  - lsd_delimited
 runner:
   kind: hf
   device: auto

@@ -5,7 +5,8 @@ output_dir: data/generated
 write_parquet: true
 schema_version: goal1.v1
 splits:
-  smoke: 0
+  smoke:
+    examples_per_slice_per_length: 1
 digit_lengths: [2, 3]
 slices:
   - no_carry
@@ -22,5 +23,8 @@ prompt_modes:
 digit_formats:
   - plain
   - delimited
+answer_formats:
+  - standard
+  - lsd_delimited
 digit_delimiter: "|"
-examples_per_slice_per_length: 1
+answer_delimiter: "|"

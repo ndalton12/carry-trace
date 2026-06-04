@@ -35,6 +35,13 @@ def test_slice_generation_is_deterministic() -> None:
     assert problem_a["max_carry_chain"] == 1
 
 
+def test_isolated_carry_generation_scales_to_long_numbers() -> None:
+    problem = generate_problem(20, Random(7), slice_name="isolated_carry")
+    assert problem["carry_count"] == 1
+    assert problem["max_carry_chain"] == 1
+    assert len(problem["a"]) == 20
+
+
 def test_long_carry_chain_slice() -> None:
     problem = generate_problem(4, Random(0), slice_name="long_carry_chain")
     assert problem["a"] == "9999"

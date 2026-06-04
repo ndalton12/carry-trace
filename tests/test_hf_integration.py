@@ -20,10 +20,11 @@ def test_optional_hugging_face_generation(tmp_path: Path) -> None:
             seed=1,
             output_dir=tmp_path / "data",
             write_parquet=False,
-            splits={"smoke": 0},
+            splits={"smoke": {"examples_per_slice_per_length": 1}},
             digit_lengths=[1],
             slices=["no_carry"],
             prompt_modes=["answer_only"],
+            answer_formats=["standard"],
         )
     )
     run_dir = run_goal1(

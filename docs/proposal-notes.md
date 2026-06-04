@@ -38,7 +38,7 @@ runner kinds, and torch dtypes should fail during config validation.
 - Dataset rows include stable example IDs, split names, prompt metadata, carry
   labels, and digit arrays for later probing and interventions.
 - Model-call records save exact prompts, chat messages, token IDs, decoded
-  outputs, parsed answers, generation settings, timing, and package versions.
+  outputs, parsed answers, generation settings, timing, and git commit hash.
 - Base-k is not part of Goal 1 execution, but parsing and digit utilities support
   non-decimal alphabets for future extension.
 
@@ -51,3 +51,7 @@ runner kinds, and torch dtypes should fail during config validation.
   digits, and ` | `-separated digits have no token surfaces that span multiple
   digits, so these separator styles are valid for arbitrary-length one-token-per-
   digit addition prompts.
+- Include an `lsd_delimited` answer-format ablation to test whether standard
+  left-to-right answer emission is a bottleneck for right-to-left carry
+  computation. The canonical answer remains saved normally, while
+  `expected_output` records the requested emitted form.

@@ -117,7 +117,8 @@ def make_problem(a: int, b: int, n_digits: int, base: int = 10) -> dict[str, obj
         "answer": answer,
         "digits_a_lsd": a_digits,
         "digits_b_lsd": b_digits,
-        "answer_length_change": len(answer) > max(
+        "answer_length_change": len(answer)
+        > max(
             len(digits_lsd_to_str(a_digits, base=base)),
             len(digits_lsd_to_str(b_digits, base=base)),
         ),
@@ -141,13 +142,7 @@ def generate_problem(
     if slice_name == SliceName.NO_CARRY:
         return _generate_no_carry(n_digits, rng, base)
     if slice_name == SliceName.ISOLATED_CARRY:
-        return _generate_by_predicate(
-            n_digits,
-            rng,
-            base,
-            lambda row: row["carry_count"] == 1 and row["max_carry_chain"] == 1,
-            slice_name.value,
-        )
+        return _generate_isolated_carry(n_digits, rng, base)
     if slice_name == SliceName.LONG_CARRY_CHAIN:
         return make_problem(int("9" * n_digits), 1, n_digits=n_digits, base=base)
     if slice_name == SliceName.INTERNAL_CARRY_CHAIN:
@@ -170,21 +165,8 @@ def _generate_random(n_digits: int, rng: Random, base: int) -> dict[str, object]
     return make_problem(rng.randint(lower, upper), rng.randint(lower, upper), n_digits, base)
 
 
-def _generate_by_predicate(
-    n_digits: int,
-    rng: Random,
-    base: int,
-    predicate: object,
-    slice_name: str,
-) -> dict[str, object]:
-    for _ in range(10_000):
-        row = _generate_random(n_digits, rng, base)
-        if callable(predicate) and predicate(row):
-            return row
-    raise RuntimeError(f"could not generate slice {slice_name!r} for {n_digits} digits")
-
-
 def _generate_no_carry(n_digits: int, rng: Random, base: int) -> dict[str, object]:
+    """Generate operands whose column sums never produce a carry."""
     a_digits = []
     b_digits = []
     for idx in range(n_digits):
@@ -198,6 +180,46 @@ def _generate_no_carry(n_digits: int, rng: Random, base: int) -> dict[str, objec
             b_digit = rng.randint(0, base - 1 - a_digit)
         a_digits.append(a_digit)
         b_digits.append(b_digit)
+    return make_problem(
+        digits_lsd_to_int(a_digits, base),
+        digits_lsd_to_int(b_digits, base),
+        n_digits,
+        base,
+    )
+
+
+def _generate_isolated_carry(n_digits: int, rng: Random, base: int) -> dict[str, object]:
+    """Generate operands with exactly one non-propagating carry column."""
+    target_idx = rng.randrange(n_digits)
+    a_digits = []
+    b_digits = []
+    for idx in range(n_digits):
+        if idx == target_idx:
+            a_digit = rng.randint(1, base - 1)
+            b_digit = rng.randint(base - a_digit, base - 1)
+        else:
+            max_a = base - 1
+            if idx == n_digits - 1 and n_digits > 1:
+                a_digit = rng.randint(1, max_a)
+            else:
+                a_digit = rng.randint(0, max_a)
+            b_digit = rng.randint(0, base - 1 - a_digit)
+
+        a_digits.append(a_digit)
+        b_digits.append(b_digit)
+
+    if (
+        target_idx + 1 < n_digits
+        and a_digits[target_idx + 1] + b_digits[target_idx + 1] >= base - 1
+    ):
+        a_digits[target_idx + 1] = 0
+        b_digits[target_idx + 1] = 0
+
+    if n_digits > 1 and a_digits[-1] == 0:
+        a_digits[-1] = 1
+        if b_digits[-1] >= base - 1:
+            b_digits[-1] = 0
+
     return make_problem(
         digits_lsd_to_int(a_digits, base),
         digits_lsd_to_int(b_digits, base),
