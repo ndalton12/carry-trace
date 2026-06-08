@@ -28,7 +28,6 @@ class AdditionExample(BaseModel):
     digit_format: DigitFormat
     digit_delimiter: str
     answer_format: AnswerFormat = AnswerFormat.STANDARD
-    answer_delimiter: str = "|"
     expected_output: str | None = None
     prompt_a: str
     prompt_b: str

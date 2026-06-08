@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from carry_trace.enums import (
     AnswerFormat,
@@ -41,17 +41,33 @@ class DatasetConfig(BaseModel):
     digit_formats: list[DigitFormat] = Field(default_factory=lambda: [DigitFormat.PLAIN])
     answer_formats: list[AnswerFormat] = Field(default_factory=lambda: [AnswerFormat.STANDARD])
     digit_delimiter: str = "|"
-    answer_delimiter: str = "|"
     examples_per_slice_per_length: int = 1
 
 
 class GenerationParams(BaseModel):
     """Text generation parameters passed to model runners."""
 
-    max_new_tokens: int = 128
+    max_new_tokens: int = Field(default=128, gt=0)
     temperature: float = 0.0
     top_p: float = 1.0
     do_sample: bool = False
+    thinking_final_answer_tokens: int | None = Field(default=None, gt=0)
+    force_close_thinking: bool = False
+
+    @model_validator(mode="after")
+    def validate_thinking_cap(self) -> GenerationParams:
+        """Validate that the thinking cap leaves room for both generation phases."""
+        if self.force_close_thinking and self.thinking_final_answer_tokens is None:
+            raise ValueError(
+                "thinking_final_answer_tokens is required when force_close_thinking is true"
+            )
+        if (
+            self.force_close_thinking
+            and self.thinking_final_answer_tokens is not None
+            and self.thinking_final_answer_tokens >= self.max_new_tokens
+        ):
+            raise ValueError("thinking_final_answer_tokens must be less than max_new_tokens")
+        return self
 
 
 class ModelSpec(BaseModel):

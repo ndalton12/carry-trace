@@ -29,9 +29,8 @@ digit_lengths: [2, 3]
 slices: [no_carry, isolated_carry]
 prompt_modes: [answer_only, structured_column_cot]
 digit_formats: [plain, delimited]
-answer_formats: [standard, lsd_delimited]
+answer_formats: [standard, lsd]
 digit_delimiter: "|"
-answer_delimiter: "|"
 ```
 
 | Field | Type | Meaning |
@@ -49,7 +48,6 @@ answer_delimiter: "|"
 | `digit_formats` | list of `DigitFormat` | Operand display formats crossed with prompt modes. |
 | `answer_formats` | list of `AnswerFormat` | Expected answer emission formats crossed with prompt and digit formats. |
 | `digit_delimiter` | string | Delimiter used when `digit_format` is `delimited`. |
-| `answer_delimiter` | string | Delimiter used when `answer_format` is `lsd_delimited`. |
 | `examples_per_slice_per_length` | integer | Default replicates per split, digit length, and slice before prompt, digit-format, and answer-format expansion. |
 
 Split config fields:
@@ -91,7 +89,7 @@ Allowed `AnswerFormat` values:
 | Value | Meaning |
 | --- | --- |
 | `standard` | Ask for the conventional most-significant-first answer, e.g. `6912`. |
-| `lsd_delimited` | Ask for answer digits least-significant first with `answer_delimiter`, e.g. `2|1|9|6`. |
+| `lsd` | Ask for answer digits least-significant first with no separators, e.g. `2196` for the normal answer `6912`. |
 
 `digit_format` and `answer_format` are independent of `prompt_mode`: every
 selected prompt mode is crossed with every selected digit format and answer
@@ -134,7 +132,7 @@ max_examples: 8
 splits: [smoke]
 prompt_modes: [answer_only, structured_column_cot]
 digit_formats: [plain, delimited]
-answer_formats: [standard, lsd_delimited]
+answer_formats: [standard, lsd]
 runner:
   kind: fake
   device: auto
@@ -149,6 +147,8 @@ generation:
   temperature: 0.0
   top_p: 1.0
   do_sample: false
+  thinking_final_answer_tokens: null
+  force_close_thinking: false
 ```
 
 | Field | Type | Meaning |
@@ -191,6 +191,8 @@ Generation parameters:
 | `temperature` | float | Sampling temperature. |
 | `top_p` | float | Nucleus sampling threshold. |
 | `do_sample` | boolean | Whether to sample. Use `false` for deterministic greedy decoding. |
+| `thinking_final_answer_tokens` | integer or null | Optional budget reserved for final-answer generation after an enforced thinking cap. |
+| `force_close_thinking` | boolean | When `true`, generate first for `max_new_tokens - thinking_final_answer_tokens`; if that output hit the cap and contains `<think>` without `</think>`, append `</think>\nFinal answer:` to the model context and continue for the reserved final-answer budget. Non-thinking outputs continue normally up to the full `max_new_tokens` budget. |
 
 ## Artifacts
 

@@ -23,7 +23,7 @@ def test_generate_dataset_writes_reusable_schema(tmp_path: Path) -> None:
         slices=["no_carry", "long_carry_chain"],
         prompt_modes=["answer_only", "structured_column_cot"],
         digit_formats=["plain", "delimited"],
-        answer_formats=["standard", "lsd_delimited"],
+        answer_formats=["standard", "lsd"],
     )
     jsonl_path, manifest_path, rows = generate_dataset(config)
     assert jsonl_path.exists()
@@ -42,9 +42,9 @@ def test_generate_dataset_writes_reusable_schema(tmp_path: Path) -> None:
     assert "|" in delimited[0]["prompt"]
     assert "|" not in delimited[0]["a"]
     assert "|" not in delimited[0]["answer"]
-    lsd = [row for row in saved if row["answer_format"] == "lsd_delimited"]
+    lsd = [row for row in saved if row["answer_format"] == "lsd"]
     assert lsd
-    assert "|" in lsd[0]["expected_output"]
+    assert "|" not in lsd[0]["expected_output"]
 
 
 def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
@@ -58,7 +58,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
         slices=["no_carry"],
         prompt_modes=["answer_only"],
         digit_formats=["plain", "delimited"],
-        answer_formats=["lsd_delimited"],
+        answer_formats=["lsd"],
     )
     dataset_path, _, _ = generate_dataset(dataset_config)
     run_dir = run_goal1(
@@ -67,7 +67,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
             dataset_path=dataset_path,
             output_dir=tmp_path / "runs",
             digit_formats=["delimited"],
-            answer_formats=["lsd_delimited"],
+            answer_formats=["lsd"],
             models=[ModelSpec(name="fake", model_id="allenai/Olmo-3-7B-Think")],
             runner=RunnerConfig(kind="fake"),
         )
@@ -76,7 +76,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
     assert (run_dir / "scored_calls.jsonl").exists()
     examples = read_jsonl(run_dir / "dataset.jsonl")
     assert {example["digit_format"] for example in examples} == {"delimited"}
-    assert {example["answer_format"] for example in examples} == {"lsd_delimited"}
+    assert {example["answer_format"] for example in examples} == {"lsd"}
     scored = read_jsonl(run_dir / "scored_calls.jsonl")
     assert scored[0]["parsed_answer_correct"] is True
     assert scored[0]["parsed_output_format_correct"] is True
@@ -131,7 +131,7 @@ def test_cli_dataset_generate(tmp_path: Path) -> None:
                 "slices: [no_carry]",
                 "prompt_modes: [answer_only]",
                 "digit_formats: [plain, delimited]",
-                "answer_formats: [standard, lsd_delimited]",
+                "answer_formats: [standard, lsd]",
             ]
         ),
         encoding="utf-8",
@@ -141,7 +141,7 @@ def test_cli_dataset_generate(tmp_path: Path) -> None:
     rows = read_jsonl(tmp_path / "data" / "cli_tiny" / "examples.jsonl")
     assert len(rows) == 4
     assert {row["digit_format"] for row in rows} == {"plain", "delimited"}
-    assert {row["answer_format"] for row in rows} == {"standard", "lsd_delimited"}
+    assert {row["answer_format"] for row in rows} == {"standard", "lsd"}
 
 
 def test_config_closed_fields_are_enums() -> None:
@@ -150,12 +150,12 @@ def test_config_closed_fields_are_enums() -> None:
         slices=["no_carry"],
         prompt_modes=["answer_only"],
         digit_formats=["delimited"],
-        answer_formats=["lsd_delimited"],
+        answer_formats=["lsd"],
     )
     assert dataset_config.slices == [SliceName.NO_CARRY]
     assert dataset_config.prompt_modes == [PromptMode.ANSWER_ONLY]
     assert dataset_config.digit_formats == [DigitFormat.DELIMITED]
-    assert dataset_config.answer_formats == [AnswerFormat.LSD_DELIMITED]
+    assert dataset_config.answer_formats == [AnswerFormat.LSD]
 
     runner_config = RunnerConfig(kind="hf")
     assert runner_config.kind == RunnerKind.HF

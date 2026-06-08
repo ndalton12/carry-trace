@@ -49,7 +49,7 @@ def output_digits_to_canonical(
     answer_format = AnswerFormat(answer_format)
     if answer_format == AnswerFormat.STANDARD:
         return normalize_answer(output_digits, base=base)
-    if answer_format == AnswerFormat.LSD_DELIMITED:
+    if answer_format == AnswerFormat.LSD:
         return normalize_answer("".join(reversed(output_digits)), base=base)
     raise ValueError(f"unknown answer format {answer_format!r}")
 

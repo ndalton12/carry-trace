@@ -21,7 +21,14 @@ class DigitFormat(StrEnum):
 class AnswerFormat(StrEnum):
     """Expected answer emission formats used in rendered prompts."""
     STANDARD = "standard"
-    LSD_DELIMITED = "lsd_delimited"
+    LSD = "lsd"
+
+    @classmethod
+    def _missing_(cls, value: object) -> AnswerFormat | None:
+        """Map legacy answer-format names to current enum values."""
+        if value == "lsd_delimited":
+            return cls.LSD
+        return None
 
 
 class SliceName(StrEnum):

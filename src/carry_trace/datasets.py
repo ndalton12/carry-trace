@@ -66,7 +66,6 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
                                     digit_format=digit_format,
                                     digit_delimiter=config.digit_delimiter,
                                     answer_format=answer_format,
-                                    answer_delimiter=config.answer_delimiter,
                                 )
                                 row_payload: dict[str, Any] = {
                                     **problem,
@@ -80,7 +79,6 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
                                     "digit_format": digit_format,
                                     "digit_delimiter": config.digit_delimiter,
                                     "answer_format": answer_format,
-                                    "answer_delimiter": config.answer_delimiter,
                                     "expected_output": expected_output,
                                     "prompt_a": prompt_a,
                                     "prompt_b": prompt_b,

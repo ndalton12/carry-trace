@@ -13,7 +13,7 @@ digit_formats:
   - delimited
 answer_formats:
   - standard
-  - lsd_delimited
+  - lsd
 runner:
   kind: hf
   device: auto
@@ -26,7 +26,9 @@ models:
   - name: olmo3-instruct
     model_id: allenai/Olmo-3-7B-Instruct
 generation:
-  max_new_tokens: 256
+  max_new_tokens: 1024
   temperature: 0.0
   top_p: 1.0
   do_sample: false
+  thinking_final_answer_tokens: 100
+  force_close_thinking: true

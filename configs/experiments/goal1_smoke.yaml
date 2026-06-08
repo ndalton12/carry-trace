@@ -13,7 +13,7 @@ digit_formats:
   - delimited
 answer_formats:
   - standard
-  - lsd_delimited
+  - lsd
 runner:
   kind: fake
   device: auto

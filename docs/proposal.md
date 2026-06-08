@@ -90,7 +90,7 @@ explicitly justifies coupling them.
   - `delimited`: operands shown with `|`, e.g. `4|8|7|9 + 2|5|6|8`
 - `answer_format`
   - `standard`: conventional most-significant-first answer
-  - `lsd_delimited`: least-significant-first digits separated by `|`
+  - `lsd`: least-significant-first digits with no separators
 - addition slice
   - `no_carry`
   - `isolated_carry`

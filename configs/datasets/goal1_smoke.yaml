@@ -25,6 +25,5 @@ digit_formats:
   - delimited
 answer_formats:
   - standard
-  - lsd_delimited
+  - lsd
 digit_delimiter: "|"
-answer_delimiter: "|"
