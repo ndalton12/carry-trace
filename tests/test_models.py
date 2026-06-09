@@ -68,10 +68,50 @@ class DummyBatchModel:
         return torch.cat([input_ids, output], dim=-1)
 
 
+class DummyThinkingCapModel:
+    """Tiny model that emits thinking text first and final-answer text on continuation."""
+
+    device = torch.device("cpu")
+
+    def __init__(self) -> None:
+        """Initialize call count and minimal model config."""
+        self.config = SimpleNamespace(pad_token_id=0)
+        self.calls = 0
+
+    def generate(self, input_ids: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        """Emit different fixed text for first-pass and continuation generations."""
+        self.calls += 1
+        batch_size = int(input_ids.shape[0])
+        if self.calls == 1:
+            text = "thinking"
+        else:
+            text = " 64031"
+        token_ids = [ord(char) for char in text]
+        output = torch.tensor([token_ids for _ in range(batch_size)], dtype=torch.long)
+        return torch.cat([input_ids, output], dim=-1)
+
+
+class DummyThinkingTokenizer(DummyBatchTokenizer):
+    """Tiny tokenizer whose chat template opens a think block in the prompt."""
+
+    chat_template = "dummy"
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        add_generation_prompt: bool = True,
+        tokenize: bool = False,
+        **kwargs: object,
+    ) -> str:
+        """Render messages with an assistant think prefix."""
+        return f"user: {messages[0]['content']}\nassistant:\n<think>"
+
+
 def test_has_unclosed_thinking_detects_open_think_block() -> None:
     """Check that unclosed thinking is detected only when the close marker is absent."""
     assert has_unclosed_thinking("<think>working") is True
     assert has_unclosed_thinking("<think>working</think>\nAnswer: 5") is False
+    assert has_unclosed_thinking("<think>done</think>\n<think>again") is True
     assert has_unclosed_thinking("Answer: 5") is False
 
 
@@ -142,3 +182,38 @@ def test_hf_runner_batches_generation_calls(tmp_path: Path) -> None:
     assert len(records) == 3
     assert {record.decoded_output for record in records} == {"77"}
     assert {record.metadata["hf_batch_size"] for record in records} == {1, 2}
+
+
+def test_hf_runner_force_closes_thinking_opened_by_prompt(tmp_path: Path) -> None:
+    """Check that thinking caps see think blocks opened by the rendered prompt."""
+    _, _, examples = generate_dataset(
+        DatasetConfig(
+            name="thinking_cap",
+            seed=1,
+            output_dir=tmp_path,
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 1}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+            digit_formats=["standard"],
+            answer_formats=["lsd"],
+        )
+    )
+    runner = object.__new__(HuggingFaceModelRunner)
+    runner.model_spec = ModelSpec(name="dummy", model_id="dummy")
+    runner.runner = RunnerConfig(kind="hf", batch_size=1)
+    runner.generation = GenerationParams(
+        max_new_tokens=10,
+        thinking_final_answer_tokens=2,
+        force_close_thinking=True,
+    )
+    runner.git_commit = None
+    runner.tokenizer = DummyThinkingTokenizer()
+    runner.model = DummyThinkingCapModel()
+
+    record = next(runner.generate(examples, run_id="run", seed=1))
+
+    assert "</think>\nFinal answer:" in record.decoded_output
+    assert record.metadata["thinking_force_closed"] is True
+    assert record.parsed_answer is not None

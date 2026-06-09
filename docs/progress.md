@@ -17,6 +17,7 @@
 - Changed dataset generation so `standard` input/output uses all configured slices, while `delimited` input and `lsd` output ablations use fresh `random` examples only.
 - Added optional Hugging Face `bitsandbytes_8bit` loading for LLM.int8-style model-weight quantization benchmarks.
 - Updated the Hugging Face runner so `runner.batch_size > 1` performs real padded batch generation on the model.
+- Fixed thinking-cap detection so chat-template prompts that already contain `<think>` are force-closed when the first generation phase hits the cap.
 
 ## Decisions
 

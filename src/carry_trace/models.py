@@ -175,6 +175,7 @@ class HuggingFaceModelRunner:
                 outputs = self._generate_outputs(
                     inputs,
                     input_ids_by_row=input_ids_by_row,
+                    rendered_prompts=rendered_prompts,
                     generate_kwargs=generate_kwargs,
                 )
             latency_seconds = (time.perf_counter() - started) / len(batch)
@@ -264,6 +265,7 @@ class HuggingFaceModelRunner:
         self,
         inputs: dict[str, Any],
         input_ids_by_row: list[list[int]],
+        rendered_prompts: list[str],
         generate_kwargs: dict[str, Any],
     ) -> list[tuple[list[int], str, dict[str, Any]]]:
         """Generate output records for a batch, optionally force-closing think blocks."""
@@ -291,11 +293,11 @@ class HuggingFaceModelRunner:
             self.tokenizer.decode(output_ids, skip_special_tokens=False)
             for output_ids in first_output_ids_by_row
         ]
-        for index, (first_output_ids, first_text) in enumerate(
-            zip(first_output_ids_by_row, first_texts, strict=True)
+        for index, (first_output_ids, first_text, rendered_prompt) in enumerate(
+            zip(first_output_ids_by_row, first_texts, rendered_prompts, strict=True)
         ):
             hit_thinking_cap = len(first_output_ids) >= first_pass_tokens
-            if hit_thinking_cap and has_unclosed_thinking(first_text):
+            if hit_thinking_cap and has_unclosed_thinking(rendered_prompt + first_text):
                 forced_indices.append(index)
             elif hit_thinking_cap:
                 continue_indices.append(index)
@@ -477,7 +479,7 @@ def _strip_trailing_token(token_ids: list[int], token_id: int | None) -> list[in
 
 def has_unclosed_thinking(text: str) -> bool:
     """Return whether decoded text has an opened but unclosed think block."""
-    return THINK_OPEN in text and THINK_CLOSE not in text
+    return text.rfind(THINK_OPEN) > text.rfind(THINK_CLOSE)
 
 
 def git_commit_hash() -> str | None:
