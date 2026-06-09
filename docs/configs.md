@@ -28,7 +28,7 @@ splits:
 digit_lengths: [2, 3]
 slices: [no_carry, isolated_carry]
 prompt_modes: [answer_only, structured_column_cot]
-digit_formats: [plain, delimited]
+digit_formats: [standard, delimited]
 answer_formats: [standard, lsd]
 digit_delimiter: "|"
 ```
@@ -43,12 +43,12 @@ digit_delimiter: "|"
 | `schema_version` | string | Saved row schema version. Keep `goal1.v1` for current runs. |
 | `splits` | map string to split config | Split names and optional per-split generation settings. Split RNG seeds are derived from `seed` and split name. |
 | `digit_lengths` | list of integers | Operand digit lengths to generate. |
-| `slices` | list of `SliceName` | Addition structure slices to include. |
+| `slices` | list of `SliceName` | Addition structure slices to include for the standard input/output condition. |
 | `prompt_modes` | list of `PromptMode` | Prompt styles crossed with each generated problem. |
-| `digit_formats` | list of `DigitFormat` | Operand display formats crossed with prompt modes. |
-| `answer_formats` | list of `AnswerFormat` | Expected answer emission formats crossed with prompt and digit formats. |
+| `digit_formats` | list of `DigitFormat` | Operand display formats to include. Non-standard formats are generated only on `random` examples. |
+| `answer_formats` | list of `AnswerFormat` | Expected answer emission formats to include. Non-standard formats are generated only on `random` examples. |
 | `digit_delimiter` | string | Delimiter used when `digit_format` is `delimited`. |
-| `examples_per_slice_per_length` | integer | Default replicates per split, digit length, and slice before prompt, digit-format, and answer-format expansion. |
+| `examples_per_slice_per_length` | integer | Default replicates per split, digit length, and generated condition before prompt expansion. |
 
 Split config fields:
 
@@ -66,7 +66,7 @@ Allowed `SliceName` values:
 | `internal_carry_chain` | Carry starts in low-order digits and stops before the most-significant digit, e.g. `1099 + 1`. |
 | `carry_distractor` | Alternating carry-suggestive surface pattern with some local carry activity but no long chain. |
 | `many_9s_no_carry` | Many 9s appear, but no column carries; useful as a shortcut-control slice. |
-| `random` | Unconstrained random operands. Mostly useful for debugging. |
+| `random` | Unconstrained random operands. Used for format ablations and broad sanity checks. |
 
 Allowed `PromptMode` values:
 
@@ -81,7 +81,7 @@ Allowed `DigitFormat` values:
 
 | Value | Meaning |
 | --- | --- |
-| `plain` | Show operands normally, e.g. `4879 + 2568`. |
+| `standard` | Show operands normally, e.g. `4879 + 2568`. |
 | `delimited` | Insert `digit_delimiter` between displayed digits, e.g. `4|8|7|9 + 2|5|6|8`. |
 
 Allowed `AnswerFormat` values:
@@ -91,10 +91,19 @@ Allowed `AnswerFormat` values:
 | `standard` | Ask for the conventional most-significant-first answer, e.g. `6912`. |
 | `lsd` | Ask for answer digits least-significant first with no separators, e.g. `2196` for the normal answer `6912`. |
 
-`digit_format` and `answer_format` are independent of `prompt_mode`: every
-selected prompt mode is crossed with every selected digit format and answer
-format. Arithmetic fields such as `a`, `b`, `answer`, digit arrays, and carry
-labels remain canonical; rendered prompt operands are saved as `prompt_a` and
+Generation uses standard formats for the full arithmetic frontier and isolates
+format ablations on fresh `random` examples:
+
+- `digit_format=standard` and `answer_format=standard` is crossed with every
+  selected slice, digit length, and prompt mode.
+- `digit_format=delimited` and `answer_format=standard` is generated only for
+  `random` examples, crossed with digit length and prompt mode.
+- `digit_format=standard` and `answer_format=lsd` is generated only for
+  `random` examples, crossed with digit length and prompt mode.
+- `digit_format=delimited` and `answer_format=lsd` is intentionally excluded.
+
+Arithmetic fields such as `a`, `b`, `answer`, digit arrays, and carry labels
+remain canonical; rendered prompt operands are saved as `prompt_a` and
 `prompt_b`, and the requested emitted answer is saved as `expected_output`.
 
 Dataset rows also support optional Goal 3 matching metadata:
@@ -131,7 +140,7 @@ output_dir: runs
 max_examples: 8
 splits: [smoke]
 prompt_modes: [answer_only, structured_column_cot]
-digit_formats: [plain, delimited]
+digit_formats: [standard, delimited]
 answer_formats: [standard, lsd]
 runner:
   kind: fake
@@ -139,6 +148,7 @@ runner:
   dtype: auto
   batch_size: 1
   trust_remote_code: false
+  quantization: none
 models:
   - name: olmo3-think-fake
     model_id: allenai/Olmo-3-7B-Think
@@ -173,6 +183,7 @@ Allowed runner values:
 | `runner.kind` | `fake`, `hf` | Deterministic test runner or Hugging Face Transformers runner. |
 | `runner.dtype` | `auto`, `float16`, `bfloat16`, `float32` | Torch dtype for model loading. |
 | `runner.device` | string | Device string such as `auto`, `cpu`, `mps`, `cuda`, or `cuda:0`. |
+| `runner.quantization` | `none`, `bitsandbytes_8bit` | Optional model-weight quantization. `bitsandbytes_8bit` uses Hugging Face `BitsAndBytesConfig(load_in_8bit=True)`, i.e. LLM.int8-style quantization, not FP8. Install with `pip install bitsandbytes` or the `quantization` project extra before using it. |
 
 Model specs:
 

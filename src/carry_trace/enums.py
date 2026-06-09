@@ -14,8 +14,15 @@ class PromptMode(StrEnum):
 
 class DigitFormat(StrEnum):
     """Operand display formats used in rendered prompts."""
-    PLAIN = "plain"
+    STANDARD = "standard"
     DELIMITED = "delimited"
+
+    @classmethod
+    def _missing_(cls, value: object) -> DigitFormat | None:
+        """Map legacy digit-format names to current enum values."""
+        if value == "plain":
+            return cls.STANDARD
+        return None
 
 
 class AnswerFormat(StrEnum):
@@ -45,6 +52,12 @@ class SliceName(StrEnum):
 class RunnerKind(StrEnum):
     FAKE = "fake"
     HF = "hf"
+
+
+class QuantizationKind(StrEnum):
+    """Model quantization modes supported by runners."""
+    NONE = "none"
+    BITSANDBYTES_8BIT = "bitsandbytes_8bit"
 
 
 class TorchDType(StrEnum):

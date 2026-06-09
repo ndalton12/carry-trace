@@ -15,8 +15,14 @@ uniformly or show jagged gains concentrated around particular carry structures.
 
 ## Implemented Digit Formats
 
-- `plain`: operands are shown normally.
+- `standard`: operands are shown normally.
 - `delimited`: operands are shown with `|` between digits, while labels and expected answers stay plain.
+
+## Format Ablation Policy
+
+Standard input/output examples use the full configured addition-slice frontier.
+Non-standard input or output formats use fresh `random` examples only, and the
+combined `delimited` input plus `lsd` output condition is excluded.
 
 ## Config Policy
 

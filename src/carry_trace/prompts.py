@@ -6,7 +6,7 @@ from carry_trace.enums import AnswerFormat, DigitFormat, PromptMode
 def render_prompt(
     problem: dict[str, object],
     prompt_mode: PromptMode | str,
-    digit_format: DigitFormat | str = DigitFormat.PLAIN,
+    digit_format: DigitFormat | str = DigitFormat.STANDARD,
     digit_delimiter: str = "|",
     answer_format: AnswerFormat | str = AnswerFormat.STANDARD,
 ) -> tuple[str, str, list[dict[str, str]], str, str, str]:
@@ -52,7 +52,7 @@ def format_operand(
 ) -> str:
     """Format an operand for display in a rendered prompt."""
     digit_format = DigitFormat(digit_format)
-    if digit_format == DigitFormat.PLAIN:
+    if digit_format == DigitFormat.STANDARD:
         return value
     if digit_format == DigitFormat.DELIMITED:
         return digit_delimiter.join(value)
@@ -65,7 +65,7 @@ def digit_format_instruction(
 ) -> str:
     """Return explanatory prompt text for the operand digit format."""
     digit_format = DigitFormat(digit_format)
-    if digit_format == DigitFormat.PLAIN:
+    if digit_format == DigitFormat.STANDARD:
         return ""
     if digit_format == DigitFormat.DELIMITED:
         return (

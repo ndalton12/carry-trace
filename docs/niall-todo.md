@@ -1,12 +1,7 @@
 # TODO
 
-Monday
-* Fix how input/output formats are used in the dataset generation part
-* Fix temperature
-
 Tuesday
-* See how long H100 takes, quants
-* See how many samples we have now
+* What batch size we can use
 
 Rest of week
 * Make presentation on the paper
@@ -17,6 +12,7 @@ Stuff to run
 * Repeat for different checkpoints
 
 # Misc Notes
-third problem "The following generation flags are not valid and may be ignored: ['temperature']. Set `TRANSFORMERS_VERBOSITY=info` for more details."
+When using greedy decoding (do_sample=False), temperature is ignored, which is fine:
+"The following generation flags are not valid and may be ignored: ['temperature']. Set `TRANSFORMERS_VERBOSITY=info` for more details."
 
 Also use api for behavior tests? nevermind - not available

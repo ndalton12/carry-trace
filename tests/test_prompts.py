@@ -17,8 +17,8 @@ def test_delimited_digit_format_is_prompt_only() -> None:
     assert messages == [{"role": "user", "content": prompt}]
 
 
-def test_plain_digit_format_keeps_operand_text() -> None:
-    assert format_operand("4879", "plain") == "4879"
+def test_standard_digit_format_keeps_operand_text() -> None:
+    assert format_operand("4879", "standard") == "4879"
 
 
 def test_lsd_answer_format_sets_expected_output() -> None:

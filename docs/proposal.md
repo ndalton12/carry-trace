@@ -77,8 +77,8 @@ to the right answer digit.
 
 ## Current Dataset Axes
 
-Implemented or planned config axes should stay independent unless a later goal
-explicitly justifies coupling them.
+Implemented config axes distinguish arithmetic structure from prompt/output
+format ablations.
 
 - `prompt_mode`
   - `answer_only`
@@ -86,7 +86,7 @@ explicitly justifies coupling them.
   - `length_controlled_cot`
   - `structured_column_cot`
 - `digit_format`
-  - `plain`: operands shown normally, e.g. `4879 + 2568`
+  - `standard`: operands shown normally, e.g. `4879 + 2568`
   - `delimited`: operands shown with `|`, e.g. `4|8|7|9 + 2|5|6|8`
 - `answer_format`
   - `standard`: conventional most-significant-first answer
@@ -110,11 +110,16 @@ Slice meanings:
 | `internal_carry_chain` | Carry chain starts in the low-order digits but stops before the most-significant digit, e.g. `1099 + 1`. | Tests propagation inside the number without making the whole problem a boundary case like all 9s. |
 | `carry_distractor` | Alternating 9-like surface pattern with some local carry activity but no long chain, e.g. LSD patterns `a=[9,0,...]`, `b=[0,1,...]`. | Tests whether models overreact to carry-suggestive surface digits. |
 | `many_9s_no_carry` | Many 9s appear, but no column carries, e.g. LSD patterns `a=[9,0,9,...]`, `b=[0,8,0,...]`. | Control for “many 9s” heuristics without actual carry state. |
-| `random` | Unconstrained random operands. | Broad background distribution, mostly for debugging or sanity checks. |
+| `random` | Unconstrained random operands. | Broad background distribution for format ablations and sanity checks. |
 
 Canonical arithmetic fields should remain plain and stable (`a`, `b`, `answer`,
 digit arrays, carry labels). Rendered prompt/output variants should be stored in
 separate fields such as `prompt_a`, `prompt_b`, and `expected_output`.
+
+Generation policy: standard input/output examples use the full configured
+addition-slice frontier, while non-standard format ablations use fresh
+`random`-slice examples only. The combined `delimited` input plus `lsd` output
+condition is intentionally excluded.
 
 Rows should distinguish arithmetic identity from rendered-example identity:
 `problem_id` identifies the underlying addition problem, while `id` identifies a
@@ -616,8 +621,9 @@ head/MLP localization after infrastructure is stable.
 
 - Read `docs/progress.md` first for current implementation state.
 - Read `docs/configs.md` before changing configs.
-- Do not collapse `prompt_mode`, `digit_format`, and `answer_format`; they are
-  independent experimental axes.
+- Do not collapse `prompt_mode`, `digit_format`, and `answer_format`; keep them
+  as recorded axes even though non-standard format ablations are generated only
+  on `random` examples.
 - Preserve canonical arithmetic fields. Add rendered variants in separate fields.
 - Keep all generated datasets and runs reproducible from config files.
 - Save raw model inputs and outputs exactly; never rely only on aggregate

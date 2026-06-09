@@ -9,7 +9,7 @@ prompt_modes:
   - answer_only
   - structured_column_cot
 digit_formats:
-  - plain
+  - standard
   - delimited
 answer_formats:
   - standard
@@ -20,6 +20,7 @@ runner:
   dtype: bfloat16
   batch_size: 1
   trust_remote_code: false
+  quantization: none
 models:
   - name: olmo3-think
     model_id: allenai/Olmo-3-7B-Think

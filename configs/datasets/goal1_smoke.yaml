@@ -21,7 +21,7 @@ prompt_modes:
   - length_controlled_cot
   - structured_column_cot
 digit_formats:
-  - plain
+  - standard
   - delimited
 answer_formats:
   - standard

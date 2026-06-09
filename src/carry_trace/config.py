@@ -11,6 +11,7 @@ from carry_trace.enums import (
     AnswerFormat,
     DigitFormat,
     PromptMode,
+    QuantizationKind,
     RunnerKind,
     SliceName,
     TorchDType,
@@ -38,7 +39,7 @@ class DatasetConfig(BaseModel):
         default_factory=lambda: [SliceName.NO_CARRY, SliceName.ISOLATED_CARRY]
     )
     prompt_modes: list[PromptMode] = Field(default_factory=lambda: [PromptMode.ANSWER_ONLY])
-    digit_formats: list[DigitFormat] = Field(default_factory=lambda: [DigitFormat.PLAIN])
+    digit_formats: list[DigitFormat] = Field(default_factory=lambda: [DigitFormat.STANDARD])
     answer_formats: list[AnswerFormat] = Field(default_factory=lambda: [AnswerFormat.STANDARD])
     digit_delimiter: str = "|"
     examples_per_slice_per_length: int = 1
@@ -87,6 +88,7 @@ class RunnerConfig(BaseModel):
     dtype: TorchDType = TorchDType.AUTO
     batch_size: int = 1
     trust_remote_code: bool = False
+    quantization: QuantizationKind = QuantizationKind.NONE
 
 
 class ExperimentConfig(BaseModel):

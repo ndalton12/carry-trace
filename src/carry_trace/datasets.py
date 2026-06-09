@@ -10,6 +10,7 @@ import pandas as pd
 
 from carry_trace.arithmetic import generate_problem
 from carry_trace.config import DatasetConfig
+from carry_trace.enums import AnswerFormat, DigitFormat, SliceName
 from carry_trace.io import ensure_dir, stable_hash, utc_now_iso, write_json, write_jsonl
 from carry_trace.prompts import render_prompt
 from carry_trace.schemas import AdditionExample
@@ -42,7 +43,7 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
             else config.examples_per_slice_per_length
         )
         for n_digits in config.digit_lengths:
-            for slice_name in config.slices:
+            for slice_name, digit_format, answer_format in _format_conditions(config):
                 for replica in range(examples_per_slice_per_length):
                     problem = generate_problem(
                         n_digits=n_digits,
@@ -51,74 +52,70 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
                         slice_name=slice_name,
                     )
                     for prompt_mode in config.prompt_modes:
-                        for digit_format in config.digit_formats:
-                            for answer_format in config.answer_formats:
-                                (
-                                    prompt,
-                                    template_id,
-                                    messages,
-                                    prompt_a,
-                                    prompt_b,
-                                    expected_output,
-                                ) = render_prompt(
-                                    problem,
-                                    prompt_mode,
-                                    digit_format=digit_format,
-                                    digit_delimiter=config.digit_delimiter,
-                                    answer_format=answer_format,
-                                )
-                                row_payload: dict[str, Any] = {
-                                    **problem,
-                                    "schema_version": config.schema_version,
-                                    "split": split,
-                                    "seed": config.seed,
-                                    "split_seed": split_seed,
-                                    "generator_config_hash": config_hash,
-                                    "slice_name": slice_name,
-                                    "prompt_mode": prompt_mode,
-                                    "digit_format": digit_format,
-                                    "digit_delimiter": config.digit_delimiter,
-                                    "answer_format": answer_format,
-                                    "expected_output": expected_output,
-                                    "prompt_a": prompt_a,
-                                    "prompt_b": prompt_b,
-                                    "template_id": template_id,
-                                    "prompt": prompt,
-                                    "messages": messages,
-                                    "first_carry_position": _first_or_none(
-                                        problem["carry_positions"]
-                                    ),
-                                    "metadata": {"replica": replica},
-                                }
-                                row_payload["problem_id"] = stable_hash(
-                                    {
-                                        "split": split,
-                                        "n_digits": n_digits,
-                                        "slice": slice_name,
-                                        "replica": replica,
-                                        "a": problem["a"],
-                                        "b": problem["b"],
-                                        "seed": config.seed,
-                                    },
-                                    length=16,
-                                )
-                                row_payload["id"] = stable_hash(
-                                    {
-                                        "problem_id": row_payload["problem_id"],
-                                        "split": split,
-                                        "n_digits": n_digits,
-                                        "slice": slice_name,
-                                        "replica": replica,
-                                        "prompt_mode": prompt_mode,
-                                        "digit_format": digit_format,
-                                        "answer_format": answer_format,
-                                        "a": problem["a"],
-                                        "b": problem["b"],
-                                        "seed": config.seed,
-                                    },
-                                    length=16,
-                                )
-                                rows.append(AdditionExample.model_validate(row_payload))
+                        (
+                            prompt,
+                            template_id,
+                            messages,
+                            prompt_a,
+                            prompt_b,
+                            expected_output,
+                        ) = render_prompt(
+                            problem,
+                            prompt_mode,
+                            digit_format=digit_format,
+                            digit_delimiter=config.digit_delimiter,
+                            answer_format=answer_format,
+                        )
+                        row_payload: dict[str, Any] = {
+                            **problem,
+                            "schema_version": config.schema_version,
+                            "split": split,
+                            "seed": config.seed,
+                            "split_seed": split_seed,
+                            "generator_config_hash": config_hash,
+                            "slice_name": slice_name,
+                            "prompt_mode": prompt_mode,
+                            "digit_format": digit_format,
+                            "digit_delimiter": config.digit_delimiter,
+                            "answer_format": answer_format,
+                            "expected_output": expected_output,
+                            "prompt_a": prompt_a,
+                            "prompt_b": prompt_b,
+                            "template_id": template_id,
+                            "prompt": prompt,
+                            "messages": messages,
+                            "first_carry_position": _first_or_none(problem["carry_positions"]),
+                            "metadata": {"replica": replica},
+                        }
+                        row_payload["problem_id"] = stable_hash(
+                            {
+                                "split": split,
+                                "n_digits": n_digits,
+                                "slice": slice_name,
+                                "replica": replica,
+                                "a": problem["a"],
+                                "b": problem["b"],
+                                "seed": config.seed,
+                            },
+                            length=16,
+                        )
+                        row_payload["id"] = stable_hash(
+                            {
+                                "problem_id": row_payload["problem_id"],
+                                "split": split,
+                                "n_digits": n_digits,
+                                "slice": slice_name,
+                                "replica": replica,
+                                "prompt_mode": prompt_mode,
+                                "digit_format": digit_format,
+                                "answer_format": answer_format,
+                                "a": problem["a"],
+                                "b": problem["b"],
+                                "seed": config.seed,
+                            },
+                            length=16,
+                        )
+                        rows.append(AdditionExample.model_validate(row_payload))
 
     write_jsonl(jsonl_path, [dump_dataset_row(row) for row in rows])
     parquet_path = None
@@ -138,6 +135,23 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
     }
     write_json(manifest_path, manifest)
     return jsonl_path, manifest_path, rows
+
+
+def _format_conditions(config: DatasetConfig) -> list[tuple[SliceName, DigitFormat, AnswerFormat]]:
+    """Return valid slice and format conditions for dataset generation."""
+    conditions: list[tuple[SliceName, DigitFormat, AnswerFormat]] = []
+    digit_formats = set(config.digit_formats)
+    answer_formats = set(config.answer_formats)
+    if DigitFormat.STANDARD in digit_formats and AnswerFormat.STANDARD in answer_formats:
+        conditions.extend(
+            (slice_name, DigitFormat.STANDARD, AnswerFormat.STANDARD)
+            for slice_name in config.slices
+        )
+    if DigitFormat.DELIMITED in digit_formats and AnswerFormat.STANDARD in answer_formats:
+        conditions.append((SliceName.RANDOM, DigitFormat.DELIMITED, AnswerFormat.STANDARD))
+    if DigitFormat.STANDARD in digit_formats and AnswerFormat.LSD in answer_formats:
+        conditions.append((SliceName.RANDOM, DigitFormat.STANDARD, AnswerFormat.LSD))
+    return conditions
 
 
 def _first_or_none(values: object) -> int | None:

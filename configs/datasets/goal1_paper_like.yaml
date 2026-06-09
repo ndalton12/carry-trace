@@ -24,7 +24,7 @@ prompt_modes:
   - answer_only
   - free_cot
 digit_formats:
-  - plain
+  - standard
   - delimited
 answer_formats:
   - standard

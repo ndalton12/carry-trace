@@ -7,7 +7,14 @@ from typer.testing import CliRunner
 from carry_trace.cli import app
 from carry_trace.config import DatasetConfig, ExperimentConfig, ModelSpec, RunnerConfig
 from carry_trace.datasets import generate_dataset
-from carry_trace.enums import AnswerFormat, DigitFormat, PromptMode, RunnerKind, SliceName
+from carry_trace.enums import (
+    AnswerFormat,
+    DigitFormat,
+    PromptMode,
+    QuantizationKind,
+    RunnerKind,
+    SliceName,
+)
 from carry_trace.io import read_jsonl
 from carry_trace.runs import run_goal1
 
@@ -22,13 +29,13 @@ def test_generate_dataset_writes_reusable_schema(tmp_path: Path) -> None:
         digit_lengths=[2],
         slices=["no_carry", "long_carry_chain"],
         prompt_modes=["answer_only", "structured_column_cot"],
-        digit_formats=["plain", "delimited"],
+        digit_formats=["standard", "delimited"],
         answer_formats=["standard", "lsd"],
     )
     jsonl_path, manifest_path, rows = generate_dataset(config)
     assert jsonl_path.exists()
     assert manifest_path.exists()
-    assert len(rows) == 16
+    assert len(rows) == 8
     saved = read_jsonl(jsonl_path)
     assert saved[0]["schema_version"] == "goal1.v1"
     assert "incoming_carry" in saved[0]
@@ -45,6 +52,13 @@ def test_generate_dataset_writes_reusable_schema(tmp_path: Path) -> None:
     lsd = [row for row in saved if row["answer_format"] == "lsd"]
     assert lsd
     assert "|" not in lsd[0]["expected_output"]
+    assert not [
+        row
+        for row in saved
+        if row["digit_format"] == "delimited" and row["answer_format"] == "lsd"
+    ]
+    assert {row["slice_name"] for row in delimited} == {"random"}
+    assert {row["slice_name"] for row in lsd} == {"random"}
 
 
 def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
@@ -57,7 +71,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
         digit_lengths=[2],
         slices=["no_carry"],
         prompt_modes=["answer_only"],
-        digit_formats=["plain", "delimited"],
+        digit_formats=["standard"],
         answer_formats=["lsd"],
     )
     dataset_path, _, _ = generate_dataset(dataset_config)
@@ -66,7 +80,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
             name="tiny",
             dataset_path=dataset_path,
             output_dir=tmp_path / "runs",
-            digit_formats=["delimited"],
+            digit_formats=["standard"],
             answer_formats=["lsd"],
             models=[ModelSpec(name="fake", model_id="allenai/Olmo-3-7B-Think")],
             runner=RunnerConfig(kind="fake"),
@@ -75,7 +89,7 @@ def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:
     assert (run_dir / "calls.jsonl").exists()
     assert (run_dir / "scored_calls.jsonl").exists()
     examples = read_jsonl(run_dir / "dataset.jsonl")
-    assert {example["digit_format"] for example in examples} == {"delimited"}
+    assert {example["digit_format"] for example in examples} == {"standard"}
     assert {example["answer_format"] for example in examples} == {"lsd"}
     scored = read_jsonl(run_dir / "scored_calls.jsonl")
     assert scored[0]["parsed_answer_correct"] is True
@@ -130,7 +144,7 @@ def test_cli_dataset_generate(tmp_path: Path) -> None:
                 "digit_lengths: [2]",
                 "slices: [no_carry]",
                 "prompt_modes: [answer_only]",
-                "digit_formats: [plain, delimited]",
+                "digit_formats: [standard, delimited]",
                 "answer_formats: [standard, lsd]",
             ]
         ),
@@ -139,9 +153,14 @@ def test_cli_dataset_generate(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["dataset", "generate", "--config", str(config_path)])
     assert result.exit_code == 0
     rows = read_jsonl(tmp_path / "data" / "cli_tiny" / "examples.jsonl")
-    assert len(rows) == 4
-    assert {row["digit_format"] for row in rows} == {"plain", "delimited"}
+    assert len(rows) == 3
+    assert {row["digit_format"] for row in rows} == {"standard", "delimited"}
     assert {row["answer_format"] for row in rows} == {"standard", "lsd"}
+    assert not [
+        row
+        for row in rows
+        if row["digit_format"] == "delimited" and row["answer_format"] == "lsd"
+    ]
 
 
 def test_config_closed_fields_are_enums() -> None:
@@ -149,16 +168,21 @@ def test_config_closed_fields_are_enums() -> None:
         name="typed",
         slices=["no_carry"],
         prompt_modes=["answer_only"],
-        digit_formats=["delimited"],
+        digit_formats=["standard", "delimited"],
         answer_formats=["lsd"],
     )
     assert dataset_config.slices == [SliceName.NO_CARRY]
     assert dataset_config.prompt_modes == [PromptMode.ANSWER_ONLY]
-    assert dataset_config.digit_formats == [DigitFormat.DELIMITED]
+    assert dataset_config.digit_formats == [DigitFormat.STANDARD, DigitFormat.DELIMITED]
     assert dataset_config.answer_formats == [AnswerFormat.LSD]
+
+    legacy_config = DatasetConfig(name="legacy", digit_formats=["plain"])
+    assert legacy_config.digit_formats == [DigitFormat.STANDARD]
 
     runner_config = RunnerConfig(kind="hf")
     assert runner_config.kind == RunnerKind.HF
+    quantized_runner_config = RunnerConfig(kind="hf", quantization="bitsandbytes_8bit")
+    assert quantized_runner_config.quantization == QuantizationKind.BITSANDBYTES_8BIT
 
 
 def test_config_rejects_unknown_enum_values() -> None:
@@ -174,3 +198,5 @@ def test_config_rejects_unknown_enum_values() -> None:
         RunnerConfig(kind="local")
     with pytest.raises(ValidationError):
         RunnerConfig(dtype="int8")
+    with pytest.raises(ValidationError):
+        RunnerConfig(quantization="fp8")

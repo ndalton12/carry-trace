@@ -6,7 +6,7 @@
 - Default checkpoint comparison is OLMo 3 Think vs OLMo 3 Instruct.
 - Default executable run is a fake-runner smoke test so the repo can validate without model downloads.
 - Verified dataset generation, fake-runner Goal 1 execution, metrics, and figure generation locally.
-- Added `digit_format` as an independent Goal 1 condition with `plain` and `delimited` variants.
+- Added `digit_format` as a Goal 1 condition with `standard` and `delimited` variants.
 - Replaced free-form config lists with enums for slices, prompt modes, digit formats, runner kind, and torch dtype.
 - Added tokenizer inspection that scans decoded vocabulary entries for digit tokens and split-digit guarantees.
 - Added `answer_format` as an independent Goal 1 condition with `standard` and `lsd` variants.
@@ -14,6 +14,9 @@
 - Added Goal 3-ready dataset metadata: populated `problem_id` plus optional matching fields that are omitted from ordinary Goal 1 artifacts when empty.
 - Added experiment-level split filtering; omitted filters, including `max_examples`, use all rows remaining after earlier filters.
 - Added optional Hugging Face thinking-cap generation for thinking checkpoints, with reserved final-answer tokens after a forced `</think>` close.
+- Changed dataset generation so `standard` input/output uses all configured slices, while `delimited` input and `lsd` output ablations use fresh `random` examples only.
+- Added optional Hugging Face `bitsandbytes_8bit` loading for LLM.int8-style model-weight quantization benchmarks.
+- Updated the Hugging Face runner so `runner.batch_size > 1` performs real padded batch generation on the model.
 
 ## Decisions
 
@@ -28,6 +31,7 @@
 - Do not rely on unsplit operands for digit-level token alignment: OLMo has bare single tokens for all 1-, 2-, and 3-digit ASCII strings, but not for 4-digit strings in the inspected vocabulary.
 - A one-off OLMo vocab scan found pipe-only tokens such as `|`, ` |`, `||`, and `||||`, but no digit-containing pipe tokens such as `|7`, `7|`, or `4|8`, supporting compact `|` as a digit delimiter.
 - Use `lsd` as the output-order ablation: canonical answers remain normal, while `expected_output` asks for least-significant-first digits with no separators.
+- Exclude the combined `delimited` input plus `lsd` output condition to keep format ablations isolated.
 - Use named split configs instead of manual seed offsets. Split RNG seeds are internal and reproducible, and split-specific replicate counts control dataset size.
 - Use `problem_id` for arithmetic-problem joins and reserve optional matching metadata for future clean/corrupt/control intervention groups.
 - Use experiment `splits` to select intended data partitions at run time instead of relying on separate dataset files.
