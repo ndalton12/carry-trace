@@ -1,7 +1,9 @@
 # TODO
 
-Tuesday
+Wednesday
 * What batch size we can use
+* Thinking size
+* delimiter ablation review?
 
 Rest of week
 * Make presentation on the paper

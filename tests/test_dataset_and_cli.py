@@ -181,6 +181,8 @@ def test_config_closed_fields_are_enums() -> None:
 
     runner_config = RunnerConfig(kind="hf")
     assert runner_config.kind == RunnerKind.HF
+    vllm_runner_config = RunnerConfig(kind="vllm", tensor_parallel_size=2)
+    assert vllm_runner_config.kind == RunnerKind.VLLM
     quantized_runner_config = RunnerConfig(kind="hf", quantization="bitsandbytes_8bit")
     assert quantized_runner_config.quantization == QuantizationKind.BITSANDBYTES_8BIT
 
@@ -200,3 +202,5 @@ def test_config_rejects_unknown_enum_values() -> None:
         RunnerConfig(dtype="int8")
     with pytest.raises(ValidationError):
         RunnerConfig(quantization="fp8")
+    with pytest.raises(ValidationError):
+        RunnerConfig(tensor_parallel_size=0)

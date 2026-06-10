@@ -50,8 +50,11 @@ class SliceName(StrEnum):
 
 
 class RunnerKind(StrEnum):
+    """Model execution backends."""
+
     FAKE = "fake"
     HF = "hf"
+    VLLM = "vllm"
 
 
 class QuantizationKind(StrEnum):

@@ -8,21 +8,46 @@ from collections.abc import Iterable, Iterator
 from importlib.util import find_spec
 from typing import Any, Protocol
 
+from carry_trace.arithmetic import DIGIT_ALPHABET
 from carry_trace.config import GenerationParams, ModelSpec, RunnerConfig
-from carry_trace.enums import QuantizationKind, RunnerKind, TorchDType
+from carry_trace.enums import AnswerFormat, QuantizationKind, RunnerKind, TorchDType
 from carry_trace.io import utc_now_iso
-from carry_trace.parsing import parse_final_answer
+from carry_trace.parsing import normalize_output_digits, parse_final_answer
 from carry_trace.schemas import AdditionExample, ModelCallRecord
 
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
-FORCED_THINKING_CLOSE = "</think>\nFinal answer:"
 HF_GENERATE_PARAM_NAMES = {
     "max_new_tokens",
     "temperature",
     "top_p",
     "do_sample",
 }
+
+
+class AnswerDigitStoppingCriteria:
+    """Stop generation once every batch row has emitted enough answer digits."""
+
+    def __init__(
+        self,
+        tokenizer: Any,
+        input_width: int,
+        expected_output_lengths: list[int],
+    ):
+        """Store tokenizer and expected emitted-answer lengths for a continuation batch."""
+        self.tokenizer = tokenizer
+        self.input_width = input_width
+        self.expected_output_lengths = expected_output_lengths
+
+    def __call__(self, input_ids: Any, scores: Any, **kwargs: object) -> bool:
+        """Return true when every row has emitted its expected number of digits."""
+        for row, expected_length in zip(input_ids, self.expected_output_lengths, strict=True):
+            generated_ids = row[self.input_width :].detach().cpu().tolist()
+            generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+            output_digits = normalize_output_digits(generated_text)
+            if output_digits is None or len(output_digits) < expected_length:
+                return False
+        return True
 
 
 class ModelRunner(Protocol):
@@ -176,6 +201,10 @@ class HuggingFaceModelRunner:
                     inputs,
                     input_ids_by_row=input_ids_by_row,
                     rendered_prompts=rendered_prompts,
+                    answer_formats=[example.answer_format for example in batch],
+                    expected_output_lengths=[
+                        _expected_output_digit_count(example) for example in batch
+                    ],
                     generate_kwargs=generate_kwargs,
                 )
             latency_seconds = (time.perf_counter() - started) / len(batch)
@@ -266,6 +295,8 @@ class HuggingFaceModelRunner:
         inputs: dict[str, Any],
         input_ids_by_row: list[list[int]],
         rendered_prompts: list[str],
+        answer_formats: list[Any],
+        expected_output_lengths: list[int],
         generate_kwargs: dict[str, Any],
     ) -> list[tuple[list[int], str, dict[str, Any]]]:
         """Generate output records for a batch, optionally force-closing think blocks."""
@@ -331,36 +362,45 @@ class HuggingFaceModelRunner:
                 )
 
         if forced_indices:
-            close_ids = self._encode_continuation(FORCED_THINKING_CLOSE)
-            contexts = [
-                input_ids_by_row[index] + first_output_ids_by_row[index] + close_ids
-                for index in forced_indices
-            ]
-            continuation_ids_by_row = self._continue_generation_batch(
-                contexts,
-                final_answer_tokens,
-                generate_kwargs,
-            )
-            for index, continuation_ids in zip(
-                forced_indices,
-                continuation_ids_by_row,
-                strict=True,
-            ):
-                output_ids = first_output_ids_by_row[index] + close_ids + continuation_ids
-                decoded = (
-                    first_texts[index]
-                    + FORCED_THINKING_CLOSE
-                    + self.tokenizer.decode(continuation_ids, skip_special_tokens=True)
+            forced_groups: dict[tuple[str, int], list[int]] = {}
+            for index in forced_indices:
+                close_text = _forced_thinking_close_text(answer_formats[index])
+                expected_length = expected_output_lengths[index]
+                forced_groups.setdefault((close_text, expected_length), []).append(index)
+            for (close_text, expected_length), group_indices in forced_groups.items():
+                close_ids = self._encode_continuation(close_text)
+                contexts = [
+                    input_ids_by_row[index] + first_output_ids_by_row[index] + close_ids
+                    for index in group_indices
+                ]
+                continuation_ids_by_row = self._continue_generation_batch(
+                    contexts,
+                    final_answer_tokens,
+                    generate_kwargs,
+                    expected_output_lengths=[expected_length] * len(group_indices),
                 )
-                records[index] = (
-                    output_ids,
-                    decoded,
-                    {
-                        "thinking_force_closed": True,
-                        "thinking_first_pass_token_count": len(first_output_ids_by_row[index]),
-                        "thinking_final_answer_token_budget": final_answer_tokens,
-                    },
-                )
+                for index, continuation_ids in zip(
+                    group_indices,
+                    continuation_ids_by_row,
+                    strict=True,
+                ):
+                    output_ids = first_output_ids_by_row[index] + close_ids + continuation_ids
+                    decoded = (
+                        first_texts[index]
+                        + close_text
+                        + self.tokenizer.decode(continuation_ids, skip_special_tokens=True)
+                    )
+                    records[index] = (
+                        output_ids,
+                        decoded,
+                        {
+                            "thinking_force_closed": True,
+                            "thinking_force_close_text": close_text,
+                            "thinking_first_pass_token_count": len(first_output_ids_by_row[index]),
+                            "thinking_final_answer_token_budget": final_answer_tokens,
+                            "thinking_stop_expected_output_digits": expected_length,
+                        },
+                    )
 
         if any(record is None for record in records):
             raise RuntimeError("internal error: missing batched generation record")
@@ -371,6 +411,7 @@ class HuggingFaceModelRunner:
         contexts: list[list[int]],
         max_new_tokens: int,
         generate_kwargs: dict[str, Any],
+        expected_output_lengths: list[int] | None = None,
     ) -> list[list[int]]:
         """Continue generation from a batch of existing token contexts."""
         input_ids, attention_mask = _left_pad_contexts(
@@ -379,11 +420,20 @@ class HuggingFaceModelRunner:
         )
         input_ids = input_ids.to(self.model.device)
         attention_mask = attention_mask.to(self.model.device)
-        outputs = self.model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            **{**generate_kwargs, "max_new_tokens": max_new_tokens},
-        )
+        kwargs = {**generate_kwargs, "max_new_tokens": max_new_tokens}
+        if expected_output_lengths is not None:
+            from transformers import StoppingCriteriaList
+
+            kwargs["stopping_criteria"] = StoppingCriteriaList(
+                [
+                    AnswerDigitStoppingCriteria(
+                        tokenizer=self.tokenizer,
+                        input_width=int(input_ids.shape[-1]),
+                        expected_output_lengths=expected_output_lengths,
+                    )
+                ]
+            )
+        outputs = self.model.generate(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         return self._generated_rows(outputs, int(input_ids.shape[-1]))
 
     def _decode_batch_outputs(
@@ -412,6 +462,255 @@ class HuggingFaceModelRunner:
         ]
 
 
+class VllmModelRunner:
+    """vLLM offline batched inference runner."""
+
+    def __init__(self, model: ModelSpec, runner: RunnerConfig, generation: GenerationParams):
+        """Store runner settings and load the vLLM engine."""
+        self.model_spec = model
+        self.runner = runner
+        self.generation = generation
+        self.git_commit = git_commit_hash()
+        self._load()
+
+    def _load(self) -> None:
+        """Load a tokenizer and initialize the vLLM engine."""
+        if find_spec("vllm") is None:
+            raise RuntimeError(
+                "runner.kind=vllm requires vLLM; install with "
+                "`pip install vllm` or `uv pip install vllm --torch-backend=auto`"
+            )
+        from transformers import AutoTokenizer
+        from vllm import LLM, SamplingParams
+
+        tokenizer_id = self.model_spec.tokenizer_id or self.model_spec.model_id
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_id,
+            revision=self.model_spec.revision,
+            trust_remote_code=self.runner.trust_remote_code,
+        )
+        self.sampling_params_cls = SamplingParams
+        engine_kwargs: dict[str, Any] = {
+            "model": self.model_spec.model_id,
+            "tokenizer": tokenizer_id,
+            "trust_remote_code": self.runner.trust_remote_code,
+            "dtype": _vllm_dtype(self.runner.dtype),
+            "tensor_parallel_size": self.runner.tensor_parallel_size,
+        }
+        if self.model_spec.revision is not None:
+            engine_kwargs["revision"] = self.model_spec.revision
+            engine_kwargs["tokenizer_revision"] = self.model_spec.revision
+        if self.runner.gpu_memory_utilization is not None:
+            engine_kwargs["gpu_memory_utilization"] = self.runner.gpu_memory_utilization
+        if self.runner.max_model_len is not None:
+            engine_kwargs["max_model_len"] = self.runner.max_model_len
+        quantization = self._vllm_quantization()
+        if quantization is not None:
+            engine_kwargs["quantization"] = quantization
+        self.llm = LLM(**engine_kwargs)
+
+    def _vllm_quantization(self) -> str | None:
+        """Return the configured vLLM quantization argument, if any."""
+        if self.runner.quantization == QuantizationKind.NONE:
+            return None
+        if self.runner.quantization == QuantizationKind.BITSANDBYTES_8BIT:
+            return "bitsandbytes"
+        raise ValueError(f"unsupported quantization mode {self.runner.quantization!r}")
+
+    def generate(
+        self,
+        examples: Iterable[AdditionExample],
+        run_id: str,
+        seed: int,
+    ) -> Iterator[ModelCallRecord]:
+        """Generate records from a vLLM offline inference engine."""
+        generation_config = self.generation.model_dump(mode="json")
+        for batch in _batched(examples, self.runner.batch_size):
+            started = time.perf_counter()
+            rendered_prompts, input_ids_by_row = self._render_and_tokenize_batch(batch)
+            outputs = self._generate_outputs(
+                batch=batch,
+                rendered_prompts=rendered_prompts,
+                input_ids_by_row=input_ids_by_row,
+            )
+            latency_seconds = (time.perf_counter() - started) / len(batch)
+            for example, rendered_prompt, input_ids, (output_ids, decoded, metadata) in zip(
+                batch,
+                rendered_prompts,
+                input_ids_by_row,
+                outputs,
+                strict=True,
+            ):
+                metadata = {**metadata, "vllm_batch_size": len(batch)}
+                yield ModelCallRecord(
+                    run_id=run_id,
+                    example_id=example.id,
+                    model_name=self.model_spec.name,
+                    model_id=self.model_spec.model_id,
+                    model_revision=self.model_spec.revision,
+                    tokenizer_id=self.model_spec.tokenizer_id,
+                    tokenizer_revision=self.model_spec.revision,
+                    runner_kind=RunnerKind.VLLM,
+                    seed=seed,
+                    timestamp=utc_now_iso(),
+                    prompt=example.prompt,
+                    messages=example.messages,
+                    rendered_prompt=rendered_prompt,
+                    input_ids=input_ids,
+                    output_ids=output_ids,
+                    decoded_output=decoded,
+                    parsed_answer=parse_final_answer(
+                        decoded,
+                        base=example.base,
+                        answer_format=example.answer_format,
+                    ),
+                    generation_config=generation_config,
+                    token_count_input=len(input_ids),
+                    token_count_output=len(output_ids),
+                    latency_seconds=latency_seconds,
+                    git_commit=self.git_commit,
+                    metadata=metadata,
+                )
+
+    def _render_and_tokenize_batch(
+        self,
+        examples: list[AdditionExample],
+    ) -> tuple[list[str], list[list[int]]]:
+        """Render prompts and tokenize them for saved call metadata."""
+        use_chat_template = bool(getattr(self.tokenizer, "chat_template", None))
+        if use_chat_template:
+            rendered_prompts = [
+                self.tokenizer.apply_chat_template(
+                    example.messages,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                )
+                for example in examples
+            ]
+            add_special_tokens = False
+        else:
+            rendered_prompts = [example.prompt for example in examples]
+            add_special_tokens = True
+        input_ids_by_row = [
+            _tokenize_text_ids(self.tokenizer, prompt, add_special_tokens=add_special_tokens)
+            for prompt in rendered_prompts
+        ]
+        return rendered_prompts, input_ids_by_row
+
+    def _generate_outputs(
+        self,
+        batch: list[AdditionExample],
+        rendered_prompts: list[str],
+        input_ids_by_row: list[list[int]],
+    ) -> list[tuple[list[int], str, dict[str, Any]]]:
+        """Generate output records for a vLLM batch, optionally force-closing think blocks."""
+        final_answer_tokens = self.generation.thinking_final_answer_tokens
+        if not self.generation.force_close_thinking or final_answer_tokens is None:
+            request_outputs = self.llm.generate(
+                rendered_prompts,
+                self._sampling_params(self.generation.max_new_tokens),
+            )
+            return [self._decode_vllm_output(output) for output in request_outputs]
+
+        first_pass_tokens = self.generation.max_new_tokens - final_answer_tokens
+        first_outputs = self.llm.generate(
+            rendered_prompts,
+            self._sampling_params(first_pass_tokens),
+        )
+        records: list[tuple[list[int], str, dict[str, Any]] | None] = [None] * len(batch)
+        continuation_prompts: list[str] = []
+        continuation_indices: list[int] = []
+        continuation_close_texts: list[str | None] = []
+
+        first_decoded = [self._decode_vllm_output(output) for output in first_outputs]
+        for index, ((first_ids, first_text, _), rendered_prompt, example) in enumerate(
+            zip(first_decoded, rendered_prompts, batch, strict=True)
+        ):
+            hit_thinking_cap = len(first_ids) >= first_pass_tokens
+            if hit_thinking_cap and has_unclosed_thinking(rendered_prompt + first_text):
+                close_text = _forced_thinking_close_text(example.answer_format)
+                continuation_prompts.append(rendered_prompt + first_text + close_text)
+                continuation_indices.append(index)
+                continuation_close_texts.append(close_text)
+            elif hit_thinking_cap:
+                continuation_prompts.append(rendered_prompt + first_text)
+                continuation_indices.append(index)
+                continuation_close_texts.append(None)
+            else:
+                records[index] = (first_ids, first_text, {})
+
+        if continuation_prompts:
+            continuation_outputs = self.llm.generate(
+                continuation_prompts,
+                self._sampling_params(final_answer_tokens),
+            )
+            for index, close_text, request_output in zip(
+                continuation_indices,
+                continuation_close_texts,
+                continuation_outputs,
+                strict=True,
+            ):
+                first_ids, first_text, _ = first_decoded[index]
+                continuation_ids, continuation_text, _ = self._decode_vllm_output(request_output)
+                if close_text is not None:
+                    expected_length = _expected_output_digit_count(batch[index])
+                    continuation_text = _trim_after_answer_digits(
+                        continuation_text,
+                        expected_length=expected_length,
+                        base=batch[index].base,
+                    )
+                    continuation_ids = _tokenize_text_ids(
+                        self.tokenizer,
+                        continuation_text,
+                        add_special_tokens=False,
+                    )
+                    close_ids = _tokenize_text_ids(
+                        self.tokenizer,
+                        close_text,
+                        add_special_tokens=False,
+                    )
+                    records[index] = (
+                        first_ids + close_ids + continuation_ids,
+                        first_text + close_text + continuation_text,
+                        {
+                            "thinking_force_closed": True,
+                            "thinking_force_close_text": close_text,
+                            "thinking_first_pass_token_count": len(first_ids),
+                            "thinking_final_answer_token_budget": final_answer_tokens,
+                            "thinking_stop_expected_output_digits": expected_length,
+                        },
+                    )
+                else:
+                    records[index] = (
+                        first_ids + continuation_ids,
+                        first_text + continuation_text,
+                        {},
+                    )
+
+        if any(record is None for record in records):
+            raise RuntimeError("internal error: missing vLLM generation record")
+        return [record for record in records if record is not None]
+
+    def _sampling_params(self, max_tokens: int) -> Any:
+        """Create vLLM sampling parameters for one generation phase."""
+        temperature = self.generation.temperature if self.generation.do_sample else 0.0
+        return self.sampling_params_cls(
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=self.generation.top_p,
+            skip_special_tokens=False,
+        )
+
+    def _decode_vllm_output(self, request_output: Any) -> tuple[list[int], str, dict[str, Any]]:
+        """Extract token IDs and text from a vLLM request output."""
+        output = request_output.outputs[0]
+        text = output.text
+        token_ids = getattr(output, "token_ids", None)
+        if token_ids is None:
+            token_ids = _tokenize_text_ids(self.tokenizer, text, add_special_tokens=False)
+        return list(token_ids), text, {}
+
+
 def make_runner(
     model: ModelSpec,
     runner: RunnerConfig,
@@ -420,7 +719,11 @@ def make_runner(
     """Create the configured model runner implementation."""
     if runner.kind == RunnerKind.FAKE:
         return FakeModelRunner(model, generation)
-    return HuggingFaceModelRunner(model, runner, generation)
+    if runner.kind == RunnerKind.HF:
+        return HuggingFaceModelRunner(model, runner, generation)
+    if runner.kind == RunnerKind.VLLM:
+        return VllmModelRunner(model, runner, generation)
+    raise ValueError(f"unsupported runner kind {runner.kind!r}")
 
 
 def _batched(
@@ -438,6 +741,49 @@ def _batched(
             batch = []
     if batch:
         yield batch
+
+
+def _expected_output_digit_count(example: AdditionExample) -> int:
+    """Return the expected number of emitted answer digits for an example."""
+    output = normalize_output_digits(example.expected_output or example.answer, base=example.base)
+    if output is None:
+        raise ValueError(f"example {example.id} has no expected output digits")
+    return len(output)
+
+
+def _forced_thinking_close_text(answer_format: AnswerFormat | str) -> str:
+    """Return the forced visible-answer prefix for a requested answer format."""
+    answer_format = AnswerFormat(answer_format)
+    if answer_format == AnswerFormat.STANDARD:
+        return "</think>\nFinal answer:"
+    if answer_format == AnswerFormat.LSD:
+        return "</think>\nFinal answer digits from right to left with no separators:"
+    raise ValueError(f"unknown answer format {answer_format!r}")
+
+
+def _tokenize_text_ids(tokenizer: Any, text: str, add_special_tokens: bool = False) -> list[int]:
+    """Tokenize one string and return a flat list of token IDs."""
+    inputs = tokenizer(text, add_special_tokens=add_special_tokens)
+    input_ids = inputs["input_ids"]
+    if hasattr(input_ids, "detach"):
+        values = input_ids.detach().cpu().tolist()
+    else:
+        values = input_ids
+    if values and isinstance(values[0], list):
+        return list(values[0])
+    return list(values)
+
+
+def _trim_after_answer_digits(text: str, expected_length: int, base: int = 10) -> str:
+    """Return text truncated immediately after the expected number of output digits."""
+    allowed = set(DIGIT_ALPHABET[:base])
+    seen = 0
+    for index, char in enumerate(text.upper()):
+        if char in allowed:
+            seen += 1
+            if seen >= expected_length:
+                return text[: index + 1]
+    return text
 
 
 def _unpadded_rows(input_ids: Any, attention_mask: Any) -> list[list[int]]:
@@ -509,3 +855,11 @@ def _torch_dtype(torch: Any, dtype: TorchDType | str) -> Any:
     if dtype not in mapping:
         raise ValueError(f"unsupported dtype {dtype!r}")
     return mapping[dtype]
+
+
+def _vllm_dtype(dtype: TorchDType | str) -> str:
+    """Map a configured dtype enum to a vLLM dtype string."""
+    dtype = TorchDType(dtype)
+    if dtype == TorchDType.AUTO:
+        return "auto"
+    return dtype.value

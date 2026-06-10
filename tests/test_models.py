@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from carry_trace.config import DatasetConfig, GenerationParams, ModelSpec, RunnerConfig
 from carry_trace.datasets import generate_dataset
 from carry_trace.enums import QuantizationKind
-from carry_trace.models import HuggingFaceModelRunner, has_unclosed_thinking
+from carry_trace.models import HuggingFaceModelRunner, VllmModelRunner, has_unclosed_thinking
 
 
 class DummyBatchTokenizer:
@@ -107,6 +107,56 @@ class DummyThinkingTokenizer(DummyBatchTokenizer):
         return f"user: {messages[0]['content']}\nassistant:\n<think>"
 
 
+class DummySamplingParams:
+    """Tiny stand-in for vLLM SamplingParams."""
+
+    def __init__(self, **kwargs: object) -> None:
+        """Store sampling parameters for assertions and fake generation."""
+        self.kwargs = kwargs
+        self.max_tokens = int(kwargs["max_tokens"])
+
+
+class DummyVllmLLM:
+    """Tiny vLLM-like engine that records prompt batch sizes."""
+
+    def __init__(self) -> None:
+        """Initialize recorded batch sizes."""
+        self.batch_sizes: list[int] = []
+
+    def generate(self, prompts: list[str], sampling_params: DummySamplingParams) -> list[object]:
+        """Return fixed vLLM-like request outputs for each prompt."""
+        self.batch_sizes.append(len(prompts))
+        text = "7" * sampling_params.max_tokens
+        token_ids = [ord(char) for char in text]
+        return [
+            SimpleNamespace(outputs=[SimpleNamespace(text=text, token_ids=token_ids)])
+            for _ in prompts
+        ]
+
+
+class DummyVllmThinkingLLM:
+    """Tiny vLLM-like engine that emits thinking text then final-answer text."""
+
+    def __init__(self, continuation_text: str) -> None:
+        """Initialize continuation text and call counter."""
+        self.continuation_text = continuation_text
+        self.calls = 0
+
+    def generate(self, prompts: list[str], sampling_params: DummySamplingParams) -> list[object]:
+        """Return different vLLM-like outputs for first-pass and continuation calls."""
+        self.calls += 1
+        if self.calls == 1:
+            text = "thinking"
+            token_ids = [ord("t")] * sampling_params.max_tokens
+        else:
+            text = self.continuation_text
+            token_ids = [ord(char) for char in text]
+        return [
+            SimpleNamespace(outputs=[SimpleNamespace(text=text, token_ids=token_ids)])
+            for _ in prompts
+        ]
+
+
 def test_has_unclosed_thinking_detects_open_think_block() -> None:
     """Check that unclosed thinking is detected only when the close marker is absent."""
     assert has_unclosed_thinking("<think>working") is True
@@ -184,6 +234,40 @@ def test_hf_runner_batches_generation_calls(tmp_path: Path) -> None:
     assert {record.metadata["hf_batch_size"] for record in records} == {1, 2}
 
 
+def test_vllm_runner_batches_generation_calls(tmp_path: Path) -> None:
+    """Check that vLLM runner batch_size controls batched generate calls."""
+    _, _, examples = generate_dataset(
+        DatasetConfig(
+            name="vllm_batching",
+            seed=1,
+            output_dir=tmp_path,
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 3}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+            digit_formats=["standard"],
+            answer_formats=["standard"],
+        )
+    )
+    runner = object.__new__(VllmModelRunner)
+    runner.model_spec = ModelSpec(name="dummy", model_id="dummy")
+    runner.runner = RunnerConfig(kind="vllm", batch_size=2)
+    runner.generation = GenerationParams(max_new_tokens=2)
+    runner.git_commit = None
+    runner.tokenizer = DummyBatchTokenizer()
+    runner.sampling_params_cls = DummySamplingParams
+    runner.llm = DummyVllmLLM()
+
+    records = list(runner.generate(examples, run_id="run", seed=1))
+
+    assert runner.llm.batch_sizes == [2, 1]
+    assert len(records) == 3
+    assert {record.decoded_output for record in records} == {"77"}
+    assert {record.metadata["vllm_batch_size"] for record in records} == {1, 2}
+    assert {record.runner_kind for record in records} == {"vllm"}
+
+
 def test_hf_runner_force_closes_thinking_opened_by_prompt(tmp_path: Path) -> None:
     """Check that thinking caps see think blocks opened by the rendered prompt."""
     _, _, examples = generate_dataset(
@@ -214,6 +298,48 @@ def test_hf_runner_force_closes_thinking_opened_by_prompt(tmp_path: Path) -> Non
 
     record = next(runner.generate(examples, run_id="run", seed=1))
 
-    assert "</think>\nFinal answer:" in record.decoded_output
+    assert (
+        "</think>\nFinal answer digits from right to left with no separators:"
+        in record.decoded_output
+    )
     assert record.metadata["thinking_force_closed"] is True
     assert record.parsed_answer is not None
+
+
+def test_vllm_runner_force_closes_thinking_opened_by_prompt(tmp_path: Path) -> None:
+    """Check that vLLM thinking caps close rendered-prompt think blocks."""
+    _, _, examples = generate_dataset(
+        DatasetConfig(
+            name="vllm_thinking_cap",
+            seed=1,
+            output_dir=tmp_path,
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 1}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+            digit_formats=["standard"],
+            answer_formats=["standard"],
+        )
+    )
+    runner = object.__new__(VllmModelRunner)
+    runner.model_spec = ModelSpec(name="dummy", model_id="dummy")
+    runner.runner = RunnerConfig(kind="vllm", batch_size=1)
+    runner.generation = GenerationParams(
+        max_new_tokens=10,
+        thinking_final_answer_tokens=2,
+        force_close_thinking=True,
+    )
+    runner.git_commit = None
+    runner.tokenizer = DummyThinkingTokenizer()
+    runner.sampling_params_cls = DummySamplingParams
+    runner.llm = DummyVllmThinkingLLM(f" {examples[0].expected_output} trailing 1124")
+
+    record = next(runner.generate(examples, run_id="run", seed=1))
+
+    assert "</think>\nFinal answer:" in record.decoded_output
+    assert "trailing" not in record.decoded_output
+    assert record.metadata["thinking_force_closed"] is True
+    expected_output_length = len(examples[0].expected_output)
+    assert record.metadata["thinking_stop_expected_output_digits"] == expected_output_length
+    assert record.parsed_answer == examples[0].answer

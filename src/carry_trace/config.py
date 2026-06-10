@@ -89,6 +89,9 @@ class RunnerConfig(BaseModel):
     batch_size: int = 1
     trust_remote_code: bool = False
     quantization: QuantizationKind = QuantizationKind.NONE
+    tensor_parallel_size: int = Field(default=1, gt=0)
+    gpu_memory_utilization: float | None = Field(default=None, gt=0.0, le=1.0)
+    max_model_len: int | None = Field(default=None, gt=0)
 
 
 class ExperimentConfig(BaseModel):

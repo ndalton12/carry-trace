@@ -18,6 +18,8 @@
 - Added optional Hugging Face `bitsandbytes_8bit` loading for LLM.int8-style model-weight quantization benchmarks.
 - Updated the Hugging Face runner so `runner.batch_size > 1` performs real padded batch generation on the model.
 - Fixed thinking-cap detection so chat-template prompts that already contain `<think>` are force-closed when the first generation phase hits the cap.
+- Made forced thinking closes answer-format-aware and added a digit-count stopping criterion for forced final-answer continuations.
+- Added an optional vLLM offline inference runner with batched prompts, BF16/FP16 dtype selection, bitsandbytes quantization passthrough, and vLLM-specific memory/parallelism knobs.
 
 ## Decisions
 
@@ -37,6 +39,7 @@
 - Use `problem_id` for arithmetic-problem joins and reserve optional matching metadata for future clean/corrupt/control intervention groups.
 - Use experiment `splits` to select intended data partitions at run time instead of relying on separate dataset files.
 - For OLMo Think runtime control, optionally reserve final-answer tokens and force-close an unclosed `<think>` block only when the first generation phase hits the thinking cap.
+- Keep vLLM optional rather than a core dependency; install it only in GPU runtimes where the `vllm` runner is selected.
 
 ## Next Work
 

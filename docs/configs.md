@@ -149,6 +149,9 @@ runner:
   batch_size: 1
   trust_remote_code: false
   quantization: none
+  tensor_parallel_size: 1
+  gpu_memory_utilization: null
+  max_model_len: null
 models:
   - name: olmo3-think-fake
     model_id: allenai/Olmo-3-7B-Think
@@ -180,10 +183,17 @@ Allowed runner values:
 
 | Field | Allowed values | Meaning |
 | --- | --- | --- |
-| `runner.kind` | `fake`, `hf` | Deterministic test runner or Hugging Face Transformers runner. |
+| `runner.kind` | `fake`, `hf`, `vllm` | Deterministic test runner, Hugging Face Transformers runner, or vLLM offline inference runner. |
 | `runner.dtype` | `auto`, `float16`, `bfloat16`, `float32` | Torch dtype for model loading. |
 | `runner.device` | string | Device string such as `auto`, `cpu`, `mps`, `cuda`, or `cuda:0`. |
-| `runner.quantization` | `none`, `bitsandbytes_8bit` | Optional model-weight quantization. `bitsandbytes_8bit` uses Hugging Face `BitsAndBytesConfig(load_in_8bit=True)`, i.e. LLM.int8-style quantization, not FP8. Install with `pip install bitsandbytes` or the `quantization` project extra before using it. |
+| `runner.quantization` | `none`, `bitsandbytes_8bit` | Optional model-weight quantization. With `hf`, `bitsandbytes_8bit` uses Hugging Face `BitsAndBytesConfig(load_in_8bit=True)`, i.e. LLM.int8-style quantization, not FP8. With `vllm`, it passes `quantization="bitsandbytes"` to vLLM. |
+| `runner.tensor_parallel_size` | positive integer | vLLM tensor-parallel GPU count. Ignored by `fake` and `hf`. |
+| `runner.gpu_memory_utilization` | float or null | Optional vLLM GPU memory utilization fraction, e.g. `0.9`. Ignored by `fake` and `hf`. |
+| `runner.max_model_len` | integer or null | Optional vLLM maximum model context length. Ignored by `fake` and `hf`. |
+
+The `vllm` runner is an optional backend dependency. Install it in the GPU
+runtime, for example with `pip install vllm` or `uv pip install vllm
+--torch-backend=auto`.
 
 Model specs:
 
