@@ -492,14 +492,13 @@ class VllmModelRunner:
         self.sampling_params_cls = SamplingParams
         engine_kwargs: dict[str, Any] = {
             "model": self.model_spec.model_id,
-            "tokenizer": tokenizer_id,
             "trust_remote_code": self.runner.trust_remote_code,
             "dtype": _vllm_dtype(self.runner.dtype),
             "tensor_parallel_size": self.runner.tensor_parallel_size,
+            "skip_tokenizer_init": True,
         }
         if self.model_spec.revision is not None:
             engine_kwargs["revision"] = self.model_spec.revision
-            engine_kwargs["tokenizer_revision"] = self.model_spec.revision
         if self.runner.gpu_memory_utilization is not None:
             engine_kwargs["gpu_memory_utilization"] = self.runner.gpu_memory_utilization
         if self.runner.max_model_len is not None:
@@ -606,19 +605,16 @@ class VllmModelRunner:
         """Generate output records for a vLLM batch, optionally force-closing think blocks."""
         final_answer_tokens = self.generation.thinking_final_answer_tokens
         if not self.generation.force_close_thinking or final_answer_tokens is None:
-            request_outputs = self.llm.generate(
-                rendered_prompts,
-                self._sampling_params(self.generation.max_new_tokens),
+            request_outputs = self._generate_token_prompts(
+                input_ids_by_row,
+                self.generation.max_new_tokens,
             )
             return [self._decode_vllm_output(output) for output in request_outputs]
 
         first_pass_tokens = self.generation.max_new_tokens - final_answer_tokens
-        first_outputs = self.llm.generate(
-            rendered_prompts,
-            self._sampling_params(first_pass_tokens),
-        )
+        first_outputs = self._generate_token_prompts(input_ids_by_row, first_pass_tokens)
         records: list[tuple[list[int], str, dict[str, Any]] | None] = [None] * len(batch)
-        continuation_prompts: list[str] = []
+        continuation_contexts: list[list[int]] = []
         continuation_indices: list[int] = []
         continuation_close_texts: list[str | None] = []
 
@@ -629,20 +625,25 @@ class VllmModelRunner:
             hit_thinking_cap = len(first_ids) >= first_pass_tokens
             if hit_thinking_cap and has_unclosed_thinking(rendered_prompt + first_text):
                 close_text = _forced_thinking_close_text(example.answer_format)
-                continuation_prompts.append(rendered_prompt + first_text + close_text)
+                close_ids = _tokenize_text_ids(
+                    self.tokenizer,
+                    close_text,
+                    add_special_tokens=False,
+                )
+                continuation_contexts.append(input_ids_by_row[index] + first_ids + close_ids)
                 continuation_indices.append(index)
                 continuation_close_texts.append(close_text)
             elif hit_thinking_cap:
-                continuation_prompts.append(rendered_prompt + first_text)
+                continuation_contexts.append(input_ids_by_row[index] + first_ids)
                 continuation_indices.append(index)
                 continuation_close_texts.append(None)
             else:
                 records[index] = (first_ids, first_text, {})
 
-        if continuation_prompts:
-            continuation_outputs = self.llm.generate(
-                continuation_prompts,
-                self._sampling_params(final_answer_tokens),
+        if continuation_contexts:
+            continuation_outputs = self._generate_token_prompts(
+                continuation_contexts,
+                final_answer_tokens,
             )
             for index, close_text, request_output in zip(
                 continuation_indices,
@@ -701,13 +702,23 @@ class VllmModelRunner:
             skip_special_tokens=False,
         )
 
+    def _generate_token_prompts(self, prompt_token_ids: list[list[int]], max_tokens: int) -> Any:
+        """Generate from pre-tokenized prompts so vLLM does not initialize a tokenizer."""
+        prompts = [{"prompt_token_ids": token_ids} for token_ids in prompt_token_ids]
+        return self.llm.generate(prompts, self._sampling_params(max_tokens))
+
     def _decode_vllm_output(self, request_output: Any) -> tuple[list[int], str, dict[str, Any]]:
         """Extract token IDs and text from a vLLM request output."""
         output = request_output.outputs[0]
-        text = output.text
         token_ids = getattr(output, "token_ids", None)
         if token_ids is None:
+            text = getattr(output, "text", "")
             token_ids = _tokenize_text_ids(self.tokenizer, text, add_special_tokens=False)
+        else:
+            text = getattr(output, "text", "") or self.tokenizer.decode(
+                list(token_ids),
+                skip_special_tokens=False,
+            )
         return list(token_ids), text, {}
 
 
