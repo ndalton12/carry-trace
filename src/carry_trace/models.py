@@ -496,6 +496,7 @@ class VllmModelRunner:
             "dtype": _vllm_dtype(self.runner.dtype),
             "tensor_parallel_size": self.runner.tensor_parallel_size,
             "skip_tokenizer_init": True,
+            "enforce_eager": self.runner.enforce_eager,
         }
         if self.model_spec.revision is not None:
             engine_kwargs["revision"] = self.model_spec.revision

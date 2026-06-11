@@ -152,6 +152,7 @@ runner:
   tensor_parallel_size: 1
   gpu_memory_utilization: null
   max_model_len: null
+  enforce_eager: false
 models:
   - name: olmo3-think-fake
     model_id: allenai/Olmo-3-7B-Think
@@ -190,6 +191,7 @@ Allowed runner values:
 | `runner.tensor_parallel_size` | positive integer | vLLM tensor-parallel GPU count. Ignored by `fake` and `hf`. |
 | `runner.gpu_memory_utilization` | float or null | Optional vLLM GPU memory utilization fraction, e.g. `0.9`. Ignored by `fake` and `hf`. |
 | `runner.max_model_len` | integer or null | Optional vLLM maximum model context length. Ignored by `fake` and `hf`. |
+| `runner.enforce_eager` | boolean | Optional vLLM eager-mode switch. Use `true` to avoid Torch Dynamo / compile-backend failures at the cost of some throughput. Ignored by `fake` and `hf`. |
 
 The `vllm` runner is an optional backend dependency. Install it in the GPU
 runtime, for example with `pip install vllm` or `uv pip install vllm

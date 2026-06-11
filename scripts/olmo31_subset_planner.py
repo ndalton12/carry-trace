@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     parser.add_argument("--max-model-len", type=int, default=None)
+    parser.add_argument("--enforce-eager", action="store_true")
     parser.add_argument("--target-hours-per-checkpoint", type=float, default=24.0)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.95)
@@ -307,6 +308,7 @@ def runner_config(args: argparse.Namespace) -> RunnerConfig:
         "quantization": "none",
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": args.gpu_memory_utilization,
+        "enforce_eager": args.enforce_eager,
     }
     if args.max_model_len is not None:
         payload["max_model_len"] = args.max_model_len
