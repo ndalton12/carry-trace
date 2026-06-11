@@ -1,20 +1,21 @@
 # Carry Trace Research Proposal
 
-Working title: **From Narration to Computation: Causal Development of Latent Algorithmic State in Reasoning-Tuned Language Models**
+Working title: **From Narration to Computation: Causal Structure of Latent Algorithmic State in Elicited Reasoning**
 
 ## Summary
 
-This project studies how reasoning post-training changes arithmetic computation
-inside language models. Addition is used as a controlled substrate because the
-ground-truth latent variables are known: incoming carry, outgoing carry, output
-digit, raw column sum, carry-chain length, and column position.
+This project studies how elicited explicit reasoning changes arithmetic
+behavior and carry-state representations inside instruction-following language
+models. Addition is used as a controlled substrate because the ground-truth
+latent variables are known: incoming carry, outgoing carry, output digit, raw
+column sum, carry-chain length, and column position.
 
 The central question is not whether chain-of-thought is broadly "faithful." The
 more precise question is:
 
 > Which parts of the visible reasoning trace are computational state, which are
-> control signals, and which are narration, and how does post-training change
-> that division of labor?
+> control signals, and which are narration, and how does eliciting explicit
+> reasoning change that division of labor?
 
 The current implementation focuses on Goal 1. The repo is intentionally being
 structured so later probing, activation patching, CoT perturbation, and base-k
@@ -23,14 +24,15 @@ and carry labels.
 
 ## Core Research Questions
 
-1. **Latent algorithmic state**: Does reasoning post-training increase the
+1. **Latent algorithmic state**: Does elicited explicit reasoning increase the
    presence and causal use of column-indexed carry state?
 2. **Temporal ordering**: Is carry state computed before it is verbalized,
    only after it is verbalized, or only near final answer emission?
 3. **Chain-of-thought function**: Are reasoning tokens scratchpad state,
    control policy, attention anchors, semantic reports, or rationalization?
-4. **Training-stage development**: How do these mechanisms change from base to
-   instruction-tuned to thinking/reasoning checkpoints?
+4. **Model/checkpoint generality**: How do these mechanisms differ between
+   instruction-following checkpoints, official Think checkpoints, and future
+   training-stage variants where feasible?
 5. **Algorithmic generality**: Do the mechanisms generalize beyond base-10
    addition to base-k arithmetic?
 
@@ -131,14 +133,22 @@ empty matching fields from artifacts.
 
 ## Checkpoint Focus
 
-Default Goal 1 comparison:
+Primary paper comparison:
 
-- Thinking: `allenai/Olmo-3-7B-Think`
-- Non-thinking: `allenai/Olmo-3-7B-Instruct`
+- Main model: `allenai/Olmo-3.1-32B-Instruct`
+- Non-reasoning condition: direct answer-only prompting.
+- Elicited-reasoning condition: step-by-step visible scratchpad prompting.
+
+Official Think checkpoints should be treated as external-validity and boundary
+analyses rather than the primary experimental object. Current pilot results
+suggest natural Think termination is budget-dependent and non-uniform across
+conditions; high forced-close rates would contaminate primary mechanistic
+claims.
 
 The code should continue to make checkpoint substitution easy through config.
-Future training-stage analyses may include base, instruct, Think-SFT,
-Think-RLVR, or other staged checkpoints if available.
+Future training-stage analyses may include base, instruct, Think-SFT, Think-RLVR,
+or other staged checkpoints if natural termination and instrumentation are
+practical.
 
 Tokenizer note:
 
@@ -147,27 +157,29 @@ Tokenizer note:
 - Tokenization-sensitive analyses should prefer delimiter conditions when they
   require one visible digit per token or stable digit boundaries.
 
-## Goal 1: Behavioral Frontier Across Training Stages
+## Goal 1: Behavioral Frontier Across Prompted Reasoning Regimes
 
 Purpose:
 
-Establish where each checkpoint succeeds and fails. This is the behavioral
-foundation for all mechanistic work.
+Establish where direct-answer and elicited-reasoning regimes succeed and fail.
+This is the behavioral foundation for all mechanistic work.
 
 Main question:
 
-Do reasoning-tuned checkpoints improve uniformly, or do they show jagged gains
-concentrated on specific carry structures, answer formats, digit formats, and
-prompt modes?
+Does elicited explicit reasoning improve arithmetic uniformly, or does it show
+jagged gains concentrated on specific carry structures, answer formats, digit
+formats, and prompt modes?
 
 Implementation requirements:
 
 - Generate reusable synthetic datasets with stable IDs and exact labels.
-- Run each checkpoint across prompt modes, digit formats, answer formats, digit
-  lengths, and carry slices.
+- Run the main checkpoint across prompt modes, digit formats, answer formats,
+  digit lengths, and carry slices.
 - Save exact local model-call artifacts: prompt, messages, rendered prompt,
-  token IDs, generation config, decoded output, parsed answer, timing, package
-  versions, model ID, model revision, seed, and timestamp.
+  token IDs, generation config, decoded output, parsed answer, timing, git
+  commit, model ID, model revision, seed, and timestamp.
+- For official Think checkpoints, report termination statistics and analyze
+  naturally closed subsets where coverage permits.
 - Produce figures only from saved artifacts.
 
 Primary metrics:
@@ -184,14 +196,14 @@ Expected figures:
 
 - Accuracy heatmap: digits x carry-chain length.
 - Error localization: first wrong digit vs first carry-relevant column.
-- Prompt-mode comparison across checkpoints.
+- Prompt-mode comparison across direct-answer and elicited-reasoning regimes.
 - Digit-format and answer-format comparisons.
 - Token count vs accuracy.
 
 Minimum publishable result:
 
-A clean behavioral characterization of how reasoning training changes arithmetic
-failure modes. This is likely workshop-level by itself unless checkpoint-stage
+A clean behavioral characterization of how elicited reasoning changes arithmetic
+failure modes. This is likely workshop-level by itself unless prompt-regime
 differences are unusually surprising.
 
 Current repo status:
@@ -206,12 +218,12 @@ Current repo status:
 Purpose:
 
 Test whether carry-related state is represented internally, and how this changes
-across checkpoints and generation time.
+across direct-answer and elicited-reasoning generation.
 
 Main question:
 
-Does post-training make carry state more explicit, earlier, or more robustly
-represented?
+Does elicited explicit reasoning make carry state more explicit, earlier, or
+more robustly represented?
 
 Activation sites to start with:
 
@@ -227,7 +239,7 @@ Suggested tooling:
 
 Store activations compressed by:
 
-- checkpoint
+- model/checkpoint
 - dataset example ID
 - prompt mode
 - digit format
@@ -269,14 +281,14 @@ answer, and answer digit positions.
 
 Expected figures:
 
-- Carry decodability vs layer by checkpoint.
+- Carry decodability vs layer by prompt regime.
 - Layer x generation-time carry decodability heatmaps.
 - Probe generalization across templates and digit lengths.
 - Incoming-carry vs outgoing-carry decodability.
 
 Minimum publishable result for Goals 1-2:
 
-Reasoning checkpoints improve arithmetic unevenly, and those improvements
+Elicited reasoning improves arithmetic unevenly, and those improvements
 correspond to stronger, earlier, and more robust carry-state representations.
 Reviewers may still object that decodability does not imply causal use, so Goal
 3 is the main elevation.
@@ -354,12 +366,12 @@ Strong evidence criterion:
 
 The intervention should change the target digit in the predicted direction,
 affect carry-relevant cases more than no-carry controls, preserve unrelated
-digits, replicate across templates, and become stronger or cleaner across
-training stages.
+digits, replicate across templates, and differ systematically between
+direct-answer and elicited-reasoning regimes.
 
 Conference-shaped claim:
 
-Reasoning post-training increases the causal manipulability and
+Elicited explicit reasoning increases the causal manipulability and
 column-specificity of latent carry state.
 
 ## Goal 4: Chain-of-Thought / State Coupling
@@ -429,19 +441,20 @@ Interpretation examples:
 - corrupted CoT flips latent carry: CoT acts as scratchpad or strong mediator
 - corrupted CoT does not flip latent carry: CoT is ignored or post-hoc
 
-## Goal 5: Training-Stage Developmental Analysis
+## Goal 5: Checkpoint And Training-Stage Generality
 
 Purpose:
 
-Turn the project from an arithmetic case study into a study of how reasoning
-models develop across training stages.
+Turn the project from a single-model arithmetic case study into a study of how
+the same mechanisms vary across checkpoints and, where available, training
+stages.
 
 Main question:
 
-How does post-training reshape the relationship between latent computation, CoT,
-and answer production?
+How stable are the observed relationships between latent computation, visible
+reasoning, and answer production across model/checkpoint variants?
 
-Compare each checkpoint on:
+Compare each feasible checkpoint on:
 
 - behavioral accuracy
 - carry probe AUC / accuracy
@@ -451,7 +464,7 @@ Compare each checkpoint on:
 - CoT pathway invariance
 - CoT corruption sensitivity
 
-Possible developmental patterns:
+Possible generality patterns:
 
 1. **SFT teaches narration, RLVR teaches computation**
    - Base: weak carry state, poor accuracy
@@ -459,10 +472,10 @@ Possible developmental patterns:
    - RLVR: stronger causal carry state and better digit-specific interventions
 
 2. **CoT improves control, not internal algorithmic state**
-   - Reasoning checkpoints use different pathways under different narrations,
+   - Prompt regimes use different pathways under different narrations,
      but carry-state interventions remain diffuse or weak.
 
-3. **Latent computation precedes narration across stages**
+3. **Latent computation precedes narration across regimes**
    - Carry state appears before CoT mentions, and CoT corruption barely affects
      causal pathways.
 
@@ -473,8 +486,8 @@ Possible developmental patterns:
 
 Expected summary panel:
 
-Checkpoint x metrics for accuracy, carry decodability, carry causality, CoT
-coupling, and base-k transfer.
+Model/checkpoint x prompt-regime metrics for accuracy, carry decodability, carry
+causality, CoT coupling, and base-k transfer.
 
 ## Goal 6: Base-k Arithmetic Extension
 
@@ -527,9 +540,9 @@ Hypotheses:
    - Base-10 works much better than unfamiliar bases.
    - Base-10 carry circuits do not transfer cleanly.
 
-3. **Reasoning training improves rule binding**
-   - Thinking checkpoints bind the explicit rule "carry if total >= k" better
-     than non-thinking checkpoints.
+3. **Elicited reasoning improves rule binding**
+   - Step-by-step prompting binds the explicit rule "carry if total >= k" better
+     than direct-answer prompting.
    - Carry representations emerge after the base rule is stated.
 
 Base-k causal test:
@@ -567,9 +580,10 @@ Tier 2: conference-critical
 Tier 3: strong conference story
 
 - Goal 4: CoT/state coupling
-- Goal 5: training-stage development
-- Deliverable: reasoning post-training changes the causal coupling between
-  latent algorithmic state, visible reasoning traces, and answer production.
+- Goal 5: checkpoint and training-stage generality
+- Deliverable: elicited explicit reasoning changes the causal coupling between
+  latent algorithmic state, visible reasoning traces, and answer production,
+  with official Think checkpoints treated as boundary analyses where feasible.
 
 Tier 4: high-upside extension
 
@@ -580,8 +594,8 @@ Tier 4: high-upside extension
 ## Expected Final Figures
 
 1. Behavioral frontier: accuracy by digit length and carry-chain length across
-   checkpoints and prompt modes.
-2. Carry-state emergence: layerwise carry decodability across checkpoints.
+   prompt regimes and checkpoint ablations.
+2. Carry-state emergence: layerwise carry decodability across prompt regimes.
 3. Temporal ordering: carry decodability over layer x generation position,
    aligned to explicit carry mentions.
 4. Causal carry intervention: patching and interchange effects on target answer
@@ -605,6 +619,13 @@ full-answer accuracy.
 Risk: CoT interventions alter token budget or formatting.
 
 Mitigation: use length-controlled conditions and matched final-answer formats.
+
+Risk: official Think checkpoints do not terminate naturally within feasible
+token budgets.
+
+Mitigation: do not use forced-closed Think generations for primary mechanistic
+claims. Report termination statistics and analyze naturally closed subsets where
+coverage permits.
 
 Risk: base-k performance is too weak.
 

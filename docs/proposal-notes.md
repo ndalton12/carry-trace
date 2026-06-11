@@ -2,9 +2,15 @@
 
 ## Goal 1 Focus
 
-Goal 1 establishes the behavioral frontier for synthetic addition across model
-checkpoints and prompt modes. It asks whether reasoning-tuned checkpoints improve
-uniformly or show jagged gains concentrated around particular carry structures.
+Goal 1 establishes the behavioral frontier for synthetic addition across
+direct-answer and elicited-reasoning prompt regimes. It asks whether elicited
+reasoning improves uniformly or shows jagged gains concentrated around
+particular carry structures.
+
+## Current Framing
+
+We study how elicited explicit reasoning changes arithmetic behavior and
+carry-state representations in instruction-following models.
 
 ## Implemented Prompt Modes
 
@@ -45,6 +51,10 @@ runner kinds, and torch dtypes should fail during config validation.
   labels, and digit arrays for later probing and interventions.
 - Model-call records save exact prompts, chat messages, token IDs, decoded
   outputs, parsed answers, generation settings, timing, and git commit hash.
+- Because natural Think termination is budget-dependent and non-uniform across
+  conditions, we do not use forced-closed generations for primary mechanistic
+  conclusions; instead, we report termination statistics and analyze the
+  naturally closed subset where coverage permits.
 - Base-k is not part of Goal 1 execution, but parsing and digit utilities support
   non-decimal alphabets for future extension.
 
