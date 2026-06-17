@@ -7,9 +7,6 @@ import re
 from carry_trace.arithmetic import DIGIT_ALPHABET
 from carry_trace.enums import AnswerFormat
 
-BOXED_RE = re.compile(r"\\boxed\{([^{}]+)\}")
-ANSWER_RE = re.compile(r"(?:final\s+answer|answer)\s*[:=]\s*([0-9A-Z,|_]+)", re.IGNORECASE)
-
 
 def normalize_answer(text: str | None, base: int = 10) -> str | None:
     """Normalize a conventional most-significant-first answer string."""
@@ -56,13 +53,6 @@ def output_digits_to_canonical(
 
 def parse_final_output_digits(text: str, base: int = 10) -> str | None:
     """Parse the final answer-like digit sequence in emitted order."""
-    for regex in (BOXED_RE, ANSWER_RE):
-        matches = regex.findall(text)
-        if matches:
-            parsed = normalize_output_digits(matches[-1], base=base)
-            if parsed is not None:
-                return parsed
-
     allowed = DIGIT_ALPHABET[:base]
     token_re = re.compile(rf"[{re.escape(allowed)},|]+(?:_{base})?", re.IGNORECASE)
     candidates = token_re.findall(text.upper())

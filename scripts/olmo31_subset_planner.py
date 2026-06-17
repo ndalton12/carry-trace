@@ -148,9 +148,16 @@ def run_checkpoint(
 
     total_seconds = time.perf_counter() - started
     scored = score_records(example_rows, records)
+    detail_rows = record_detail_rows(model_name, scored, example_rows)
+    forced_rows = [row for row in detail_rows if row["forced_close"]]
     write_jsonl(run_root / f"{model_name}_calls.jsonl", records)
     write_jsonl(run_root / f"{model_name}_scored_calls.jsonl", scored)
     pd.DataFrame(scored).to_csv(run_root / f"{model_name}_scored_calls.csv", index=False)
+    pd.DataFrame(detail_rows).to_csv(run_root / f"{model_name}_example_details.csv", index=False)
+    pd.DataFrame(forced_rows).to_csv(
+        run_root / f"{model_name}_forced_close_examples.csv",
+        index=False,
+    )
     summarize_goal1(scored, example_rows).to_csv(
         run_root / f"{model_name}_metrics_summary.csv",
         index=False,
@@ -167,6 +174,21 @@ def run_checkpoint(
     }
     write_json(run_root / f"{model_name}_runtime.json", runtime)
     print(f"Wrote {model_name} artifacts to {run_root}", flush=True)
+    if forced_rows:
+        forced_preview = pd.DataFrame(forced_rows)[
+            [
+                "n_digits",
+                "slice_name",
+                "prompt_mode",
+                "a",
+                "b",
+                "answer",
+                "token_count_output",
+                "parsed_answer_correct",
+            ]
+        ]
+        print("\nForced-close examples:", flush=True)
+        print(forced_preview.to_string(index=False), flush=True)
 
 
 def summarize_outputs(args: argparse.Namespace, run_root: Path) -> None:
@@ -179,6 +201,7 @@ def summarize_outputs(args: argparse.Namespace, run_root: Path) -> None:
     )
     summary_rows = []
     cell_summaries = []
+    detail_tables = []
     for model_name in ("olmo31_32b_instruct", "olmo31_32b_think"):
         scored_path = run_root / f"{model_name}_scored_calls.jsonl"
         runtime_path = run_root / f"{model_name}_runtime.json"
@@ -188,6 +211,7 @@ def summarize_outputs(args: argparse.Namespace, run_root: Path) -> None:
         runtime = read_json(runtime_path)
         summary_rows.append(summarize_model(model_name, scored, runtime, num_cells))
         cell_summaries.append(summarize_cells(model_name, scored, example_rows))
+        detail_tables.append(pd.DataFrame(record_detail_rows(model_name, scored, example_rows)))
 
     if not summary_rows:
         raise FileNotFoundError(f"no completed scored-call artifacts found in {run_root}")
@@ -201,6 +225,27 @@ def summarize_outputs(args: argparse.Namespace, run_root: Path) -> None:
     cell_summary_df.to_csv(run_root / "cell_level_summary.csv", index=False)
     print("\nCell-level summary:", flush=True)
     print(cell_summary_df.to_string(index=False), flush=True)
+
+    detail_df = pd.concat(detail_tables, ignore_index=True)
+    detail_df.to_csv(run_root / "example_details.csv", index=False)
+    forced_df = detail_df[detail_df["forced_close"]].copy()
+    forced_df.to_csv(run_root / "forced_close_examples.csv", index=False)
+    print("\nForced-close examples:", flush=True)
+    if forced_df.empty:
+        print("None", flush=True)
+    else:
+        forced_cols = [
+            "model_name",
+            "n_digits",
+            "slice_name",
+            "prompt_mode",
+            "a",
+            "b",
+            "answer",
+            "token_count_output",
+            "parsed_answer_correct",
+        ]
+        print(forced_df[forced_cols].to_string(index=False), flush=True)
 
     paired_examples_per_cell = int(summary_df["examples_per_cell_24h"].min())
     paired_total = paired_examples_per_cell * num_cells
@@ -239,6 +284,60 @@ def summarize_model(
         "p50_output_tokens": df["token_count_output"].quantile(0.5),
         "p90_output_tokens": df["token_count_output"].quantile(0.9),
     }
+
+
+def record_detail_rows(
+    model_name: str,
+    scored: list[dict[str, Any]],
+    example_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return per-example rows with metadata useful for diagnosing Think termination."""
+    examples_by_id = {row["id"]: row for row in example_rows}
+    details = []
+    for row in scored:
+        example = examples_by_id[row["example_id"]]
+        metadata = row.get("metadata") or {}
+        decoded = row.get("decoded_output") or ""
+        details.append(
+            {
+                "model_name": model_name,
+                "example_id": row["example_id"],
+                "problem_id": example.get("problem_id"),
+                "n_digits": example.get("n_digits"),
+                "slice_name": example.get("slice_name"),
+                "prompt_mode": example.get("prompt_mode"),
+                "digit_format": example.get("digit_format"),
+                "answer_format": example.get("answer_format"),
+                "a": example.get("a"),
+                "b": example.get("b"),
+                "answer": example.get("answer"),
+                "expected_output": example.get("expected_output"),
+                "carry_count": example.get("carry_count"),
+                "max_carry_chain": example.get("max_carry_chain"),
+                "first_carry_position": example.get("first_carry_position"),
+                "parsed_answer": row.get("parsed_answer"),
+                "parsed_output": row.get("parsed_output"),
+                "parsed_answer_correct": row.get("parsed_answer_correct"),
+                "parsed_output_format_correct": row.get("parsed_output_format_correct"),
+                "token_count_input": row.get("token_count_input"),
+                "token_count_output": row.get("token_count_output"),
+                "latency_seconds": row.get("latency_seconds"),
+                "forced_close": bool(metadata.get("thinking_force_closed")),
+                "thinking_first_pass_token_count": metadata.get(
+                    "thinking_first_pass_token_count"
+                ),
+                "thinking_final_answer_token_budget": metadata.get(
+                    "thinking_final_answer_token_budget"
+                ),
+                "thinking_stop_expected_output_digits": metadata.get(
+                    "thinking_stop_expected_output_digits"
+                ),
+                "prompt": row.get("prompt"),
+                "decoded_output_prefix": decoded[:800],
+                "decoded_output_suffix": decoded[-800:],
+            }
+        )
+    return details
 
 
 def summarize_cells(
