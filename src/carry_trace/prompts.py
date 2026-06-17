@@ -22,9 +22,7 @@ def render_prompt(
     if prompt_mode == PromptMode.ANSWER_ONLY:
         content = f"{prefix}What is {a} + {b}? {answer_instruction}"
     elif prompt_mode == PromptMode.FREE_COT:
-        content = (
-            f"{prefix}What is {a} + {b}? Think step by step, then {answer_instruction.lower()}"
-        )
+        content = f"{prefix}What is {a} + {b}? Solve the problem step by step, then {answer_instruction.lower()}"
     elif prompt_mode == PromptMode.LENGTH_CONTROLLED_COT:
         content = (
             f"{prefix}What is {a} + {b}? Solve this in exactly four short steps, "
@@ -83,7 +81,7 @@ def answer_format_instruction(answer_format: AnswerFormat | str) -> str:
     if answer_format == AnswerFormat.LSD:
         return (
             "Give only the answer digits from right to left with no separators; "
-            "for example, if the normal answer is 6912, write 2196."
+            "for example, if the normal answer is 6912, write 2196. This is known as the least significant digit format."
         )
     raise ValueError(f"unknown answer format {answer_format!r}")
 
