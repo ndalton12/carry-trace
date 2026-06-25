@@ -13,7 +13,7 @@ splits:
     examples_per_slice_per_length: 8
   test_behavior:
     examples_per_slice_per_length: 32
-digit_lengths: [2, 3, 4, 5, 8, 12, 16, 20]
+digit_lengths: [2, 4, 8, 16] # maybe 12 and 20?
 slices:
   - no_carry
   - isolated_carry

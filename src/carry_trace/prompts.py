@@ -15,22 +15,27 @@ def render_prompt(
     digit_format = DigitFormat(digit_format)
     answer_format = AnswerFormat(answer_format)
 
+    base = int(problem.get("base", 10))
     a = format_operand(str(problem["a"]), digit_format, digit_delimiter)
     b = format_operand(str(problem["b"]), digit_format, digit_delimiter)
     prefix = digit_format_instruction(digit_format, digit_delimiter)
-    answer_instruction = answer_format_instruction(answer_format)
+    question = addition_question(a, b, base)
+    answer_instruction = answer_format_instruction(answer_format, base)
     if prompt_mode == PromptMode.ANSWER_ONLY:
-        content = f"{prefix}What is {a} + {b}? {answer_instruction}"
+        content = f"{prefix}{question} {answer_instruction}"
     elif prompt_mode == PromptMode.FREE_COT:
-        content = f"{prefix}What is {a} + {b}? Solve the problem step by step, then {answer_instruction.lower()}"
+        content = (
+            f"{prefix}{question} Solve the problem step by step, "
+            f"then {answer_instruction.lower()}"
+        )
     elif prompt_mode == PromptMode.LENGTH_CONTROLLED_COT:
         content = (
-            f"{prefix}What is {a} + {b}? Solve this in exactly four short steps, "
+            f"{prefix}{question} Solve this in exactly four short steps, "
             f"then {answer_instruction.lower()}"
         )
     else:
         content = (
-            f"{prefix}What is {a} + {b}? Solve column by column from right to left. "
+            f"{prefix}{question} Solve column by column from right to left. "
             f"For each column, state the digit and carry, then {answer_instruction.lower()}"
         )
 
@@ -41,6 +46,13 @@ def render_prompt(
         answer_format,
     )
     return content, template_id, messages, a, b, expected_output
+
+
+def addition_question(a: str, b: str, base: int = 10) -> str:
+    """Return the addition question text, including base wording when needed."""
+    if base == 10:
+        return f"What is {a} + {b}?"
+    return f"In base {base}, what is {a} + {b}?"
 
 
 def format_operand(
@@ -73,15 +85,18 @@ def digit_format_instruction(
     raise ValueError(f"unknown digit format {digit_format!r}")
 
 
-def answer_format_instruction(answer_format: AnswerFormat | str) -> str:
+def answer_format_instruction(answer_format: AnswerFormat | str, base: int = 10) -> str:
     """Return the prompt instruction for the requested answer format."""
     answer_format = AnswerFormat(answer_format)
+    base_phrase = "" if base == 10 else f" in base {base}"
     if answer_format == AnswerFormat.STANDARD:
-        return "Give only the answer; use standard formatting without delimiters."
+        return f"Give only the answer{base_phrase}; use standard formatting without delimiters."
     if answer_format == AnswerFormat.LSD:
+        digit_phrase = "answer digits" if base == 10 else f"answer digits in base {base}"
         return (
-            "Give only the answer digits from right to left with no separators; "
-            "for example, if the normal answer is 6912, write 2196. This is known as the least significant digit format."
+            f"Give only the {digit_phrase} from right to left with no separators; "
+            "for example, if the normal answer is 6912, write 2196. "
+            "This is known as the least significant digit format."
         )
     raise ValueError(f"unknown answer format {answer_format!r}")
 
