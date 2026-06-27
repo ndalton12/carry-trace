@@ -1,0 +1,32 @@
+name: myriad_olmo31_32b_instruct_smoke
+seed: 20260625
+dataset_path: data/generated/myriad_olmo31_32b_instruct_smoke/examples.jsonl
+output_dir: runs
+splits:
+  - smoke
+prompt_modes:
+  - answer_only
+  - free_cot
+digit_formats:
+  - standard
+answer_formats:
+  - standard
+runner:
+  kind: vllm
+  device: auto
+  dtype: bfloat16
+  batch_size: 2
+  trust_remote_code: false
+  quantization: none
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.95
+  max_model_len: 4096
+  enforce_eager: true
+models:
+  - name: olmo31_32b_instruct
+    model_id: allenai/Olmo-3.1-32B-Instruct
+generation:
+  max_new_tokens: 2048
+  temperature: 0.6
+  top_p: 0.95
+  do_sample: true

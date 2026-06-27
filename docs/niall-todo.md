@@ -1,9 +1,10 @@
 # TODO
 
-Sat
-* Use base-k as the regular set! less memorization, need fewer digits
-* Make real dataset for 32b instruct, subset on 32b think
-* Upload to Huggingface
+Models to use
+* Instruct no RL: Olmo-3-7b-Instruct-SFT
+* Instruct + RL: Olmo-3-7b-Instruct
+
+Weekend
 
 Next week
 * Test run on Myriad

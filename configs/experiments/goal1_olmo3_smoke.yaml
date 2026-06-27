@@ -29,7 +29,7 @@ models:
 generation:
   max_new_tokens: 1024
   temperature: 0.0
-  top_p: 1.0
-  do_sample: false
+  top_p: 0.5
+  do_sample: true
   thinking_final_answer_tokens: 100
   force_close_thinking: true

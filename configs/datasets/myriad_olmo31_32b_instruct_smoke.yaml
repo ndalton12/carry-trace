@@ -1,26 +1,22 @@
-name: goal1_paper_like
-seed: 20260601
+name: myriad_olmo31_32b_instruct_smoke
+seed: 20260625
 base: 10
 output_dir: data/generated
 write_parquet: false
 schema_version: goal1.v1
 splits:
-  test_behavior:
-    examples_per_slice_per_length: 16
-digit_lengths: [2, 4, 8]
+  smoke:
+    examples_per_slice_per_length: 1
+digit_lengths: [4, 8]
 slices:
   - no_carry
   - isolated_carry
   - long_carry_chain
-  - carry_distractor
-  - random
 prompt_modes:
   - answer_only
   - free_cot
 digit_formats:
   - standard
-  - delimited
 answer_formats:
   - standard
-  - lsd
 digit_delimiter: "|"

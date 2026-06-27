@@ -2,7 +2,7 @@ name: goal1_smoke
 seed: 13
 base: 10
 output_dir: data/generated
-write_parquet: true
+write_parquet: false
 schema_version: goal1.v1
 splits:
   smoke:
