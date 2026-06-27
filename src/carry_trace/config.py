@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -17,11 +18,20 @@ from carry_trace.enums import (
     TorchDType,
 )
 
+ExampleCount = Annotated[int, Field(ge=0)]
+
 
 class SplitConfig(BaseModel):
     """Per-split dataset generation settings."""
 
-    examples_per_slice_per_length: int | None = None
+    examples_per_slice_per_length: ExampleCount | None = None
+    slice_examples_per_length: dict[SliceName, ExampleCount] = Field(default_factory=dict)
+
+
+class RandomSamplingConfig(BaseModel):
+    """Random-slice generation settings."""
+
+    balance_carry_count: bool = False
 
 
 class DatasetConfig(BaseModel):
@@ -42,7 +52,9 @@ class DatasetConfig(BaseModel):
     digit_formats: list[DigitFormat] = Field(default_factory=lambda: [DigitFormat.STANDARD])
     answer_formats: list[AnswerFormat] = Field(default_factory=lambda: [AnswerFormat.STANDARD])
     digit_delimiter: str = "|"
-    examples_per_slice_per_length: int = 1
+    examples_per_slice_per_length: ExampleCount = 1
+    slice_examples_per_length: dict[SliceName, ExampleCount] = Field(default_factory=dict)
+    random_sampling: RandomSamplingConfig = Field(default_factory=RandomSamplingConfig)
 
 
 class GenerationParams(BaseModel):

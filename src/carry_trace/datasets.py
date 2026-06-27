@@ -8,8 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from carry_trace.arithmetic import generate_problem
-from carry_trace.config import DatasetConfig
+from carry_trace.arithmetic import generate_problem, generate_random_problem_with_carry_count
+from carry_trace.config import DatasetConfig, SplitConfig
 from carry_trace.enums import AnswerFormat, DigitFormat, SliceName
 from carry_trace.io import ensure_dir, stable_hash, utc_now_iso, write_json, write_jsonl
 from carry_trace.prompts import render_prompt
@@ -37,20 +37,40 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
     for split, split_config in config.splits.items():
         split_seed = _split_seed(config.seed, split)
         rng = Random(split_seed)
-        examples_per_slice_per_length = (
-            split_config.examples_per_slice_per_length
-            if split_config.examples_per_slice_per_length is not None
-            else config.examples_per_slice_per_length
-        )
         for n_digits in config.digit_lengths:
             for slice_name, digit_format, answer_format in _format_conditions(config):
-                for replica in range(examples_per_slice_per_length):
-                    problem = generate_problem(
-                        n_digits=n_digits,
-                        rng=rng,
-                        base=config.base,
-                        slice_name=slice_name,
-                    )
+                examples_per_slice_per_length = _examples_per_slice_per_length(
+                    config,
+                    split_config,
+                    slice_name,
+                )
+                carry_count_targets = _carry_count_targets(
+                    n_digits,
+                    examples_per_slice_per_length,
+                    rng,
+                    balance=(
+                        slice_name == SliceName.RANDOM
+                        and config.random_sampling.balance_carry_count
+                    ),
+                )
+                for replica, target_carry_count in enumerate(carry_count_targets):
+                    metadata: dict[str, Any] = {"replica": replica}
+                    if target_carry_count is None:
+                        problem = generate_problem(
+                            n_digits=n_digits,
+                            rng=rng,
+                            base=config.base,
+                            slice_name=slice_name,
+                        )
+                    else:
+                        problem = generate_random_problem_with_carry_count(
+                            n_digits=n_digits,
+                            rng=rng,
+                            base=config.base,
+                            carry_count=target_carry_count,
+                        )
+                        metadata["target_carry_count"] = target_carry_count
+
                     for prompt_mode in config.prompt_modes:
                         (
                             prompt,
@@ -85,7 +105,7 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
                             "prompt": prompt,
                             "messages": messages,
                             "first_carry_position": _first_or_none(problem["carry_positions"]),
-                            "metadata": {"replica": replica},
+                            "metadata": metadata,
                         }
                         row_payload["problem_id"] = stable_hash(
                             {
@@ -152,6 +172,40 @@ def _format_conditions(config: DatasetConfig) -> list[tuple[SliceName, DigitForm
     if DigitFormat.STANDARD in digit_formats and AnswerFormat.LSD in answer_formats:
         conditions.append((SliceName.RANDOM, DigitFormat.STANDARD, AnswerFormat.LSD))
     return conditions
+
+
+def _examples_per_slice_per_length(
+    config: DatasetConfig,
+    split_config: SplitConfig,
+    slice_name: SliceName,
+) -> int:
+    """Return the replicate count for one split and slice condition."""
+    if slice_name in split_config.slice_examples_per_length:
+        return split_config.slice_examples_per_length[slice_name]
+    if split_config.examples_per_slice_per_length is not None:
+        return split_config.examples_per_slice_per_length
+    if slice_name in config.slice_examples_per_length:
+        return config.slice_examples_per_length[slice_name]
+    return config.examples_per_slice_per_length
+
+
+def _carry_count_targets(
+    n_digits: int,
+    count: int,
+    rng: Random,
+    balance: bool,
+) -> list[int | None]:
+    """Return target carry counts for balanced random generation."""
+    if not balance:
+        return [None] * count
+
+    targets: list[int] = []
+    carry_counts = list(range(n_digits + 1))
+    while len(targets) < count:
+        cycle = carry_counts.copy()
+        rng.shuffle(cycle)
+        targets.extend(cycle)
+    return targets[:count]
 
 
 def _first_or_none(values: object) -> int | None:

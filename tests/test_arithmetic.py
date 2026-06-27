@@ -4,6 +4,7 @@ from carry_trace.arithmetic import (
     add_lsd_digits,
     digits_lsd_to_str,
     generate_problem,
+    generate_random_problem_with_carry_count,
     int_to_digits_lsd,
     str_to_digits_lsd,
 )
@@ -48,3 +49,12 @@ def test_long_carry_chain_slice() -> None:
     assert problem["b"] == "1"
     assert problem["answer"] == "10000"
     assert problem["max_carry_chain"] == 4
+
+
+def test_random_generation_targets_exact_carry_count() -> None:
+    rng = Random(11)
+    for carry_count in range(5):
+        problem = generate_random_problem_with_carry_count(4, rng, carry_count=carry_count)
+        assert problem["carry_count"] == carry_count
+        assert len(problem["a"]) == 4
+        assert len(problem["b"]) == 4

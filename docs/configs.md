@@ -25,12 +25,16 @@ schema_version: goal1.v1
 splits:
   smoke:
     examples_per_slice_per_length: 1
+    slice_examples_per_length:
+      random: 8
 digit_lengths: [2, 3]
 slices: [no_carry, isolated_carry]
 prompt_modes: [answer_only, structured_column_cot]
 digit_formats: [standard, delimited]
 answer_formats: [standard, lsd]
 digit_delimiter: "|"
+random_sampling:
+  balance_carry_count: true
 ```
 
 | Field | Type | Meaning |
@@ -49,12 +53,24 @@ digit_delimiter: "|"
 | `answer_formats` | list of `AnswerFormat` | Expected answer emission formats to include. Non-standard formats are generated only on `random` examples. |
 | `digit_delimiter` | string | Delimiter used when `digit_format` is `delimited`. |
 | `examples_per_slice_per_length` | integer | Default replicates per split, digit length, and generated condition before prompt expansion. |
+| `slice_examples_per_length` | map `SliceName` to integer | Dataset-level replicate overrides for particular slices. |
+| `random_sampling` | object | Optional generation strategy settings for `random` slices. |
 
 Split config fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `examples_per_slice_per_length` | integer or null | Optional split-specific replicate count. Falls back to the dataset-level default when omitted. |
+| `slice_examples_per_length` | map `SliceName` to integer | Split-specific replicate overrides for particular slices. |
+
+Replicate-count precedence is: split-specific slice override, then split
+default, then dataset-level slice override, then dataset default.
+
+Random sampling fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `balance_carry_count` | boolean | If true, `random` examples are generated with approximately even total carry counts per split, digit length, and format condition. This balances only the number of carry-producing columns, not the exact carry positions. |
 
 Allowed `SliceName` values:
 

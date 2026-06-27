@@ -160,9 +160,76 @@ def generate_problem(
 
 
 def _generate_random(n_digits: int, rng: Random, base: int) -> dict[str, object]:
+    """Generate unconstrained random operands with the requested digit width."""
     lower = 0 if n_digits == 1 else base ** (n_digits - 1)
     upper = (base**n_digits) - 1
     return make_problem(rng.randint(lower, upper), rng.randint(lower, upper), n_digits, base)
+
+
+def generate_random_problem_with_carry_count(
+    n_digits: int,
+    rng: Random,
+    base: int = 10,
+    carry_count: int = 0,
+) -> dict[str, object]:
+    """Generate a random-looking problem with an exact number of carry columns."""
+    if n_digits < 1:
+        raise ValueError("n_digits must be positive")
+    if base != 10:
+        raise ValueError("Goal 1 generator currently supports base 10 only")
+    if carry_count < 0 or carry_count > n_digits:
+        raise ValueError("carry_count must be between 0 and n_digits")
+
+    carry_positions = set(rng.sample(range(n_digits), carry_count))
+    incoming_carry = 0
+    a_digits: list[int] = []
+    b_digits: list[int] = []
+    for idx in range(n_digits):
+        outgoing_carry = 1 if idx in carry_positions else 0
+        require_nonzero = idx == n_digits - 1 and n_digits > 1
+        a_digit, b_digit = _sample_digit_pair_for_carry(
+            rng,
+            base,
+            incoming_carry=incoming_carry,
+            outgoing_carry=outgoing_carry,
+            require_a_nonzero=require_nonzero,
+            require_b_nonzero=require_nonzero,
+        )
+        a_digits.append(a_digit)
+        b_digits.append(b_digit)
+        incoming_carry = outgoing_carry
+
+    problem = make_problem(
+        digits_lsd_to_int(a_digits, base),
+        digits_lsd_to_int(b_digits, base),
+        n_digits,
+        base,
+    )
+    if problem["carry_count"] != carry_count:
+        raise RuntimeError("targeted random generation produced the wrong carry count")
+    return problem
+
+
+def _sample_digit_pair_for_carry(
+    rng: Random,
+    base: int,
+    incoming_carry: int,
+    outgoing_carry: int,
+    require_a_nonzero: bool = False,
+    require_b_nonzero: bool = False,
+) -> tuple[int, int]:
+    """Sample one digit pair that produces the requested outgoing carry."""
+    min_a = 1 if require_a_nonzero else 0
+    min_b = 1 if require_b_nonzero else 0
+    candidates = [
+        (a_digit, b_digit)
+        for a_digit in range(min_a, base)
+        for b_digit in range(min_b, base)
+        if (a_digit + b_digit + incoming_carry) // base == outgoing_carry
+    ]
+    if not candidates:
+        raise RuntimeError("no digit pair satisfies requested carry transition")
+    return rng.choice(candidates)
 
 
 def _generate_no_carry(n_digits: int, rng: Random, base: int) -> dict[str, object]:

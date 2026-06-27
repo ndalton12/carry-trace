@@ -23,6 +23,11 @@ HF_GENERATE_PARAM_NAMES = {
     "top_p",
     "do_sample",
 }
+CHAT_TURN_STOP_TOKENS = (
+    "<|im_end|>",
+    "<|eot_id|>",
+    "<|end_of_turn|>",
+)
 
 
 class AnswerDigitStoppingCriteria:
@@ -284,11 +289,19 @@ class HuggingFaceModelRunner:
 
     def _hf_generate_kwargs(self) -> dict[str, Any]:
         """Return only generation parameters accepted by Hugging Face generate."""
-        return {
+        kwargs = {
             key: value
             for key, value in self.generation.model_dump(mode="json").items()
             if key in HF_GENERATE_PARAM_NAMES
         }
+        stop_token_ids = _generation_stop_token_ids(self.tokenizer, self.model)
+        if stop_token_ids:
+            kwargs["eos_token_id"] = (
+                stop_token_ids[0] if len(stop_token_ids) == 1 else stop_token_ids
+            )
+        if self.tokenizer.pad_token_id is not None:
+            kwargs["pad_token_id"] = int(self.tokenizer.pad_token_id)
+        return kwargs
 
     def _generate_outputs(
         self,
@@ -796,6 +809,40 @@ def _trim_after_answer_digits(text: str, expected_length: int, base: int = 10) -
             if seen >= expected_length:
                 return text[: index + 1]
     return text
+
+
+def _generation_stop_token_ids(tokenizer: Any, model: Any) -> list[int]:
+    """Return EOS and chat-turn stop token IDs supported by the tokenizer/model."""
+    token_ids: list[int] = []
+
+    def add_token_id(value: object) -> None:
+        """Add one or more valid token IDs while preserving order."""
+        if value is None:
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                add_token_id(item)
+            return
+        try:
+            token_id = int(value)
+        except (TypeError, ValueError):
+            return
+        if token_id >= 0 and token_id not in token_ids:
+            token_ids.append(token_id)
+
+    add_token_id(getattr(tokenizer, "eos_token_id", None))
+    add_token_id(getattr(getattr(model, "generation_config", None), "eos_token_id", None))
+    add_token_id(getattr(getattr(model, "config", None), "eos_token_id", None))
+
+    convert = getattr(tokenizer, "convert_tokens_to_ids", None)
+    unk_token_id = getattr(tokenizer, "unk_token_id", None)
+    if callable(convert):
+        for token in CHAT_TURN_STOP_TOKENS:
+            token_id = convert(token)
+            if token_id is not None and token_id != unk_token_id:
+                add_token_id(token_id)
+
+    return token_ids
 
 
 def _unpadded_rows(input_ids: Any, attention_mask: Any) -> list[list[int]]:

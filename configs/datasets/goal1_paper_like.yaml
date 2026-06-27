@@ -7,7 +7,13 @@ schema_version: goal1.v1
 splits:
   test_behavior:
     examples_per_slice_per_length: 16
-digit_lengths: [2, 4, 8]
+    slice_examples_per_length:
+      no_carry: 16
+      isolated_carry: 16
+      long_carry_chain: 16
+      carry_distractor: 16
+      random: 64
+digit_lengths: [2, 4, 6]
 slices:
   - no_carry
   - isolated_carry
@@ -24,3 +30,5 @@ answer_formats:
   - standard
   - lsd
 digit_delimiter: "|"
+random_sampling:
+  balance_carry_count: true

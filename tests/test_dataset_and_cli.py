@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,50 @@ def test_generate_dataset_writes_reusable_schema(tmp_path: Path) -> None:
     ]
     assert {row["slice_name"] for row in delimited} == {"random"}
     assert {row["slice_name"] for row in lsd} == {"random"}
+
+
+def test_generate_dataset_uses_slice_count_overrides(tmp_path: Path) -> None:
+    config = DatasetConfig(
+        name="slice_counts",
+        seed=1,
+        output_dir=tmp_path,
+        write_parquet=False,
+        splits={
+            "smoke": {
+                "examples_per_slice_per_length": 2,
+                "slice_examples_per_length": {"random": 5},
+            }
+        },
+        digit_lengths=[2],
+        slices=["no_carry", "random"],
+        prompt_modes=["answer_only"],
+        digit_formats=["standard"],
+        answer_formats=["standard"],
+    )
+    _, _, rows = generate_dataset(config)
+    counts = Counter(row.slice_name for row in rows)
+    assert counts[SliceName.NO_CARRY] == 2
+    assert counts[SliceName.RANDOM] == 5
+
+
+def test_generate_dataset_balances_random_carry_counts(tmp_path: Path) -> None:
+    config = DatasetConfig(
+        name="balanced_random",
+        seed=1,
+        output_dir=tmp_path,
+        write_parquet=False,
+        splits={"smoke": {"slice_examples_per_length": {"random": 8}}},
+        digit_lengths=[3],
+        slices=["random"],
+        prompt_modes=["answer_only"],
+        digit_formats=["standard"],
+        answer_formats=["standard"],
+        random_sampling={"balance_carry_count": True},
+    )
+    _, _, rows = generate_dataset(config)
+    counts = Counter(row.carry_count for row in rows)
+    assert counts == {0: 2, 1: 2, 2: 2, 3: 2}
+    assert all(row.metadata["target_carry_count"] == row.carry_count for row in rows)
 
 
 def test_goal1_fake_run_scores_outputs(tmp_path: Path) -> None:

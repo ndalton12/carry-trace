@@ -49,6 +49,47 @@ class DummyBatchTokenizer:
         return "".join(chr(token_id) for token_id in ids if token_id != self.pad_token_id)
 
 
+class DummyChatStopTokenizer(DummyBatchTokenizer):
+    """Tiny chat tokenizer with an explicit end-of-message token."""
+
+    chat_template = "dummy"
+    im_end_token_id = 2
+    im_start_token_id = 3
+    special_token_ids = {im_end_token_id, im_start_token_id}
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        add_generation_prompt: bool = True,
+        tokenize: bool = False,
+        **kwargs: object,
+    ) -> str:
+        """Render messages with ChatML-like role delimiters."""
+        return f"<|im_start|>user\n{messages[0]['content']}<|im_end|>\n<|im_start|>assistant\n"
+
+    def convert_tokens_to_ids(self, token: str) -> int | None:
+        """Return fake token IDs for ChatML control tokens."""
+        if token == "<|im_end|>":
+            return self.im_end_token_id
+        if token == "<|im_start|>":
+            return self.im_start_token_id
+        return None
+
+    def decode(self, ids: list[int], skip_special_tokens: bool = True) -> str:
+        """Decode fake token IDs while optionally hiding special tokens."""
+        chars = []
+        for token_id in ids:
+            if skip_special_tokens and token_id in self.special_token_ids:
+                continue
+            if token_id == self.im_end_token_id:
+                chars.append("<|im_end|>")
+            elif token_id == self.im_start_token_id:
+                chars.append("<|im_start|>")
+            elif token_id != self.pad_token_id:
+                chars.append(chr(token_id))
+        return "".join(chars)
+
+
 class DummyBatchModel:
     """Tiny model that records batch sizes passed to generate."""
 
@@ -65,6 +106,37 @@ class DummyBatchModel:
         self.batch_sizes.append(batch_size)
         max_new_tokens = int(kwargs.get("max_new_tokens", 1))
         output = torch.full((batch_size, max_new_tokens), ord("7"), dtype=torch.long)
+        return torch.cat([input_ids, output], dim=-1)
+
+
+class DummyChatStopModel:
+    """Tiny model that would continue into a new chat turn unless stopped."""
+
+    device = torch.device("cpu")
+
+    def __init__(self) -> None:
+        """Initialize recorded EOS kwargs and minimal model config."""
+        self.config = SimpleNamespace(pad_token_id=0)
+        self.eos_token_ids: list[object] = []
+
+    def generate(self, input_ids: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        """Emit answer, end-of-message, and a fake next user turn."""
+        self.eos_token_ids.append(kwargs.get("eos_token_id"))
+        batch_size = int(input_ids.shape[0])
+        generated = [
+            ord("7"),
+            DummyChatStopTokenizer.im_end_token_id,
+            DummyChatStopTokenizer.im_start_token_id,
+            *[ord(char) for char in "user\nignored"],
+        ]
+        eos_token_ids = kwargs.get("eos_token_id", [])
+        if isinstance(eos_token_ids, int):
+            eos_token_ids = [eos_token_ids]
+        for index, token_id in enumerate(generated):
+            if token_id in eos_token_ids:
+                generated = generated[: index + 1]
+                break
+        output = torch.tensor([generated for _ in range(batch_size)], dtype=torch.long)
         return torch.cat([input_ids, output], dim=-1)
 
 
@@ -173,11 +245,15 @@ def test_hf_generate_kwargs_excludes_thinking_cap_fields() -> None:
         thinking_final_answer_tokens=100,
         force_close_thinking=True,
     )
+    runner.tokenizer = DummyBatchTokenizer()
+    runner.model = DummyBatchModel()
     assert runner._hf_generate_kwargs() == {
         "max_new_tokens": 256,
         "temperature": 0.0,
         "top_p": 1.0,
         "do_sample": False,
+        "eos_token_id": 0,
+        "pad_token_id": 0,
     }
 
 
@@ -232,6 +308,36 @@ def test_hf_runner_batches_generation_calls(tmp_path: Path) -> None:
     assert len(records) == 3
     assert {record.decoded_output for record in records} == {"77"}
     assert {record.metadata["hf_batch_size"] for record in records} == {1, 2}
+
+
+def test_hf_runner_stops_before_next_chat_turn(tmp_path: Path) -> None:
+    """Check that HF generation stops on chat turn-end tokens."""
+    _, _, examples = generate_dataset(
+        DatasetConfig(
+            name="chat_stop",
+            seed=1,
+            output_dir=tmp_path,
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 1}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+            digit_formats=["standard"],
+            answer_formats=["standard"],
+        )
+    )
+    runner = object.__new__(HuggingFaceModelRunner)
+    runner.model_spec = ModelSpec(name="dummy", model_id="dummy")
+    runner.runner = RunnerConfig(kind="hf", batch_size=1)
+    runner.generation = GenerationParams(max_new_tokens=20)
+    runner.git_commit = None
+    runner.tokenizer = DummyChatStopTokenizer()
+    runner.model = DummyChatStopModel()
+
+    record = next(runner.generate(examples, run_id="run", seed=1))
+
+    assert record.decoded_output == "7"
+    assert DummyChatStopTokenizer.im_end_token_id in runner.model.eos_token_ids[0]
 
 
 def test_vllm_runner_batches_generation_calls(tmp_path: Path) -> None:
