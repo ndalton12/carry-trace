@@ -6,7 +6,13 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from carry_trace.cli import app
-from carry_trace.config import DatasetConfig, ExperimentConfig, ModelSpec, RunnerConfig
+from carry_trace.config import (
+    DatasetConfig,
+    ExperimentConfig,
+    GenerationParams,
+    ModelSpec,
+    RunnerConfig,
+)
 from carry_trace.datasets import generate_dataset
 from carry_trace.enums import (
     AnswerFormat,
@@ -16,7 +22,9 @@ from carry_trace.enums import (
     RunnerKind,
     SliceName,
 )
-from carry_trace.io import read_jsonl
+from carry_trace.io import read_json, read_jsonl, stable_hash, write_json, write_jsonl
+from carry_trace.metrics import score_records, summarize_goal1
+from carry_trace.models import FakeModelRunner
 from carry_trace.runs import run_goal1
 
 
@@ -172,6 +180,108 @@ def test_goal1_run_filters_splits(tmp_path: Path) -> None:
     )
     examples = read_jsonl(run_dir / "dataset.jsonl")
     assert {example["split"] for example in examples} == {"test_behavior"}
+
+
+def test_goal1_run_resumes_incomplete_calls(tmp_path: Path) -> None:
+    dataset_path, _, examples = generate_dataset(
+        DatasetConfig(
+            name="resume_dataset",
+            seed=1,
+            output_dir=tmp_path / "data",
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 2}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+        )
+    )
+    model = ModelSpec(name="fake", model_id="dummy")
+    config = ExperimentConfig(
+        name="resume_run",
+        dataset_path=dataset_path,
+        output_dir=tmp_path / "runs",
+        models=[model],
+        runner=RunnerConfig(kind="fake"),
+    )
+    run_dir = tmp_path / "runs" / "resume_run-existing"
+    run_dir.mkdir(parents=True)
+    config_hash = stable_hash(config.model_dump(mode="json"))
+    write_json(
+        run_dir / "manifest.json",
+        {
+            "run_id": run_dir.name,
+            "created_at": "2026-01-01T00:00:00Z",
+            "status": "running",
+            "config_hash": config_hash,
+            "config": config.model_dump(mode="json"),
+            "dataset_path": str(dataset_path),
+            "example_count": len(examples),
+            "expected_record_count": len(examples),
+        },
+    )
+    first_record = next(
+        FakeModelRunner(model, GenerationParams()).generate(
+            [examples[0]],
+            run_id=run_dir.name,
+            seed=config.seed,
+        )
+    )
+    write_jsonl(run_dir / "calls.jsonl", [first_record.model_dump(mode="json")])
+
+    resumed_run_dir = run_goal1(config)
+
+    assert resumed_run_dir == run_dir
+    calls = read_jsonl(run_dir / "calls.jsonl")
+    assert len(calls) == 2
+    assert {call["example_id"] for call in calls} == {example.id for example in examples}
+    assert read_json(run_dir / "manifest.json")["status"] == "complete"
+    assert (run_dir / "scored_calls.jsonl").exists()
+
+
+def test_goal1_scoring_marks_token_limit_hits_invalid(tmp_path: Path) -> None:
+    dataset_path, _, _ = generate_dataset(
+        DatasetConfig(
+            name="token_limit_dataset",
+            seed=1,
+            output_dir=tmp_path / "data",
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 2}},
+            digit_lengths=[1],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+        )
+    )
+    examples = read_jsonl(dataset_path)
+    records = [
+        {
+            "example_id": examples[0]["id"],
+            "model_name": "dummy",
+            "decoded_output": "999",
+            "token_count_output": 3,
+            "latency_seconds": 1.0,
+            "metadata": {"hit_token_limit": True},
+        },
+        {
+            "example_id": examples[1]["id"],
+            "model_name": "dummy",
+            "decoded_output": examples[1]["answer"],
+            "token_count_output": 1,
+            "latency_seconds": 1.0,
+            "metadata": {"hit_token_limit": False},
+        },
+    ]
+
+    scored = score_records(examples, records)
+    summary = summarize_goal1(scored, examples).iloc[0]
+
+    assert [record["generation_valid"] for record in scored] == [False, True]
+    assert [record["hit_token_limit"] for record in scored] == [True, False]
+    assert summary["examples"] == 2
+    assert summary["valid_examples"] == 1
+    assert summary["token_limit_hits"] == 1
+    assert summary["avg_output_tokens"] == 2
+    assert summary["avg_output_tokens_valid"] == 1
+    assert summary["parsed_accuracy_valid"] == 1
 
 
 def test_cli_dataset_generate(tmp_path: Path) -> None:

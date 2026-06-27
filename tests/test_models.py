@@ -109,6 +109,27 @@ class DummyBatchModel:
         return torch.cat([input_ids, output], dim=-1)
 
 
+class DummyUnevenOutputModel:
+    """Tiny model that emits different generated lengths within one batch."""
+
+    device = torch.device("cpu")
+
+    def __init__(self) -> None:
+        """Initialize recorded batch widths and minimal model config."""
+        self.config = SimpleNamespace(pad_token_id=0)
+        self.input_widths: list[int] = []
+
+    def generate(self, input_ids: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        """Append one short row and one max-length row padded to a common width."""
+        self.input_widths.append(int(input_ids.shape[-1]))
+        max_new_tokens = int(kwargs.get("max_new_tokens", 3))
+        outputs = [
+            [ord("7")] + [0] * (max_new_tokens - 1),
+            [ord("8")] * max_new_tokens,
+        ]
+        return torch.cat([input_ids, torch.tensor(outputs, dtype=torch.long)], dim=-1)
+
+
 class DummyChatStopModel:
     """Tiny model that would continue into a new chat turn unless stopped."""
 
@@ -308,6 +329,39 @@ def test_hf_runner_batches_generation_calls(tmp_path: Path) -> None:
     assert len(records) == 3
     assert {record.decoded_output for record in records} == {"77"}
     assert {record.metadata["hf_batch_size"] for record in records} == {1, 2}
+
+
+def test_hf_runner_tracks_uneven_batched_output_lengths(tmp_path: Path) -> None:
+    """Check batched HF records preserve per-row generated lengths and limit flags."""
+    _, _, examples = generate_dataset(
+        DatasetConfig(
+            name="uneven_batching",
+            seed=1,
+            output_dir=tmp_path,
+            write_parquet=False,
+            splits={"smoke": {"examples_per_slice_per_length": 1}},
+            digit_lengths=[1, 2],
+            slices=["no_carry"],
+            prompt_modes=["answer_only"],
+            digit_formats=["standard"],
+            answer_formats=["standard"],
+        )
+    )
+    runner = object.__new__(HuggingFaceModelRunner)
+    runner.model_spec = ModelSpec(name="dummy", model_id="dummy")
+    runner.runner = RunnerConfig(kind="hf", batch_size=2)
+    runner.generation = GenerationParams(max_new_tokens=3)
+    runner.git_commit = None
+    runner.tokenizer = DummyBatchTokenizer()
+    runner.model = DummyUnevenOutputModel()
+
+    records = list(runner.generate(examples, run_id="run", seed=1))
+
+    assert runner.model.input_widths == [max(len(record.input_ids) for record in records)]
+    assert [record.decoded_output for record in records] == ["7", "888"]
+    assert [record.token_count_output for record in records] == [1, 3]
+    assert [record.metadata["generated_token_count"] for record in records] == [1, 3]
+    assert [record.metadata["hit_token_limit"] for record in records] == [False, True]
 
 
 def test_hf_runner_stops_before_next_chat_turn(tmp_path: Path) -> None:

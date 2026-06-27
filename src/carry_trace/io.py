@@ -47,6 +47,19 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
     return count
 
 
+def append_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
+    """Append rows to a JSONL file and flush after each row."""
+    ensure_dir(path.parent)
+    count = 0
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True, default=str))
+            handle.write("\n")
+            handle.flush()
+            count += 1
+    return count
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = []
     with path.open("r", encoding="utf-8") as handle:

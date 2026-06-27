@@ -319,6 +319,7 @@ class HuggingFaceModelRunner:
             return self._decode_batch_outputs(
                 outputs,
                 int(inputs["input_ids"].shape[-1]),
+                max_new_tokens=int(generate_kwargs["max_new_tokens"]),
             )
 
         first_pass_tokens = self.generation.max_new_tokens - final_answer_tokens
@@ -349,7 +350,10 @@ class HuggingFaceModelRunner:
                 records[index] = (
                     first_output_ids,
                     self.tokenizer.decode(first_output_ids, skip_special_tokens=True),
-                    {},
+                    _generation_limit_metadata(
+                        generated_token_count=len(first_output_ids),
+                        max_new_tokens=first_pass_tokens,
+                    ),
                 )
 
         if continue_indices:
@@ -371,7 +375,10 @@ class HuggingFaceModelRunner:
                 records[index] = (
                     output_ids,
                     self.tokenizer.decode(output_ids, skip_special_tokens=True),
-                    {},
+                    _generation_limit_metadata(
+                        generated_token_count=len(output_ids),
+                        max_new_tokens=self.generation.max_new_tokens,
+                    ),
                 )
 
         if forced_indices:
@@ -407,6 +414,13 @@ class HuggingFaceModelRunner:
                         output_ids,
                         decoded,
                         {
+                            **_generation_limit_metadata(
+                                generated_token_count=(
+                                    len(first_output_ids_by_row[index]) + len(continuation_ids)
+                                ),
+                                max_new_tokens=self.generation.max_new_tokens,
+                                hit_token_limit=True,
+                            ),
                             "thinking_force_closed": True,
                             "thinking_force_close_text": close_text,
                             "thinking_first_pass_token_count": len(first_output_ids_by_row[index]),
@@ -453,12 +467,20 @@ class HuggingFaceModelRunner:
         self,
         outputs: Any,
         input_width: int,
+        max_new_tokens: int,
     ) -> list[tuple[list[int], str, dict[str, Any]]]:
         """Decode generated tokens for each row in a batch."""
         records = []
         for output_ids in self._generated_rows(outputs, input_width):
             records.append(
-                (output_ids, self.tokenizer.decode(output_ids, skip_special_tokens=True), {})
+                (
+                    output_ids,
+                    self.tokenizer.decode(output_ids, skip_special_tokens=True),
+                    _generation_limit_metadata(
+                        generated_token_count=len(output_ids),
+                        max_new_tokens=max_new_tokens,
+                    ),
+                )
             )
         return records
 
@@ -467,7 +489,11 @@ class HuggingFaceModelRunner:
         inputs = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")
         return inputs["input_ids"][0].detach().cpu().tolist()
 
-    def _generated_rows(self, outputs: Any, input_width: int) -> list[list[int]]:
+    def _generated_rows(
+        self,
+        outputs: Any,
+        input_width: int,
+    ) -> list[list[int]]:
         """Extract generated token rows and remove trailing batch padding."""
         return [
             _strip_trailing_token(row, self.tokenizer.pad_token_id)
@@ -623,7 +649,10 @@ class VllmModelRunner:
                 input_ids_by_row,
                 self.generation.max_new_tokens,
             )
-            return [self._decode_vllm_output(output) for output in request_outputs]
+            return [
+                self._decode_vllm_output(output, max_tokens=self.generation.max_new_tokens)
+                for output in request_outputs
+            ]
 
         first_pass_tokens = self.generation.max_new_tokens - final_answer_tokens
         first_outputs = self._generate_token_prompts(input_ids_by_row, first_pass_tokens)
@@ -632,7 +661,10 @@ class VllmModelRunner:
         continuation_indices: list[int] = []
         continuation_close_texts: list[str | None] = []
 
-        first_decoded = [self._decode_vllm_output(output) for output in first_outputs]
+        first_decoded = [
+            self._decode_vllm_output(output, max_tokens=first_pass_tokens)
+            for output in first_outputs
+        ]
         for index, ((first_ids, first_text, _), rendered_prompt, example) in enumerate(
             zip(first_decoded, rendered_prompts, batch, strict=True)
         ):
@@ -652,7 +684,14 @@ class VllmModelRunner:
                 continuation_indices.append(index)
                 continuation_close_texts.append(None)
             else:
-                records[index] = (first_ids, first_text, {})
+                records[index] = (
+                    first_ids,
+                    first_text,
+                    _generation_limit_metadata(
+                        generated_token_count=len(first_ids),
+                        max_new_tokens=first_pass_tokens,
+                    ),
+                )
 
         if continuation_contexts:
             continuation_outputs = self._generate_token_prompts(
@@ -666,7 +705,10 @@ class VllmModelRunner:
                 strict=True,
             ):
                 first_ids, first_text, _ = first_decoded[index]
-                continuation_ids, continuation_text, _ = self._decode_vllm_output(request_output)
+                continuation_ids, continuation_text, _ = self._decode_vllm_output(
+                    request_output,
+                    max_tokens=final_answer_tokens,
+                )
                 if close_text is not None:
                     expected_length = _expected_output_digit_count(batch[index])
                     continuation_text = _trim_after_answer_digits(
@@ -688,6 +730,11 @@ class VllmModelRunner:
                         first_ids + close_ids + continuation_ids,
                         first_text + close_text + continuation_text,
                         {
+                            **_generation_limit_metadata(
+                                generated_token_count=len(first_ids) + len(continuation_ids),
+                                max_new_tokens=self.generation.max_new_tokens,
+                                hit_token_limit=True,
+                            ),
                             "thinking_force_closed": True,
                             "thinking_force_close_text": close_text,
                             "thinking_first_pass_token_count": len(first_ids),
@@ -699,7 +746,10 @@ class VllmModelRunner:
                     records[index] = (
                         first_ids + continuation_ids,
                         first_text + continuation_text,
-                        {},
+                        _generation_limit_metadata(
+                            generated_token_count=len(first_ids) + len(continuation_ids),
+                            max_new_tokens=self.generation.max_new_tokens,
+                        ),
                     )
 
         if any(record is None for record in records):
@@ -721,7 +771,11 @@ class VllmModelRunner:
         prompts = [{"prompt_token_ids": token_ids} for token_ids in prompt_token_ids]
         return self.llm.generate(prompts, self._sampling_params(max_tokens))
 
-    def _decode_vllm_output(self, request_output: Any) -> tuple[list[int], str, dict[str, Any]]:
+    def _decode_vllm_output(
+        self,
+        request_output: Any,
+        max_tokens: int | None = None,
+    ) -> tuple[list[int], str, dict[str, Any]]:
         """Extract token IDs and text from a vLLM request output."""
         output = request_output.outputs[0]
         token_ids = getattr(output, "token_ids", None)
@@ -733,7 +787,15 @@ class VllmModelRunner:
                 list(token_ids),
                 skip_special_tokens=False,
             )
-        return list(token_ids), text, {}
+        metadata = (
+            _generation_limit_metadata(
+                generated_token_count=len(token_ids),
+                max_new_tokens=max_tokens,
+            )
+            if max_tokens is not None
+            else {}
+        )
+        return list(token_ids), text, metadata
 
 
 def make_runner(
@@ -809,6 +871,22 @@ def _trim_after_answer_digits(text: str, expected_length: int, base: int = 10) -
             if seen >= expected_length:
                 return text[: index + 1]
     return text
+
+
+def _generation_limit_metadata(
+    generated_token_count: int,
+    max_new_tokens: int,
+    hit_token_limit: bool | None = None,
+) -> dict[str, Any]:
+    """Return metadata describing whether generation exhausted its token budget."""
+    hit_limit = (
+        generated_token_count >= max_new_tokens if hit_token_limit is None else hit_token_limit
+    )
+    return {
+        "generated_token_count": generated_token_count,
+        "generation_token_limit": max_new_tokens,
+        "hit_token_limit": hit_limit,
+    }
 
 
 def _generation_stop_token_ids(tokenizer: Any, model: Any) -> list[int]:

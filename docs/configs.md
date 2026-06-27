@@ -244,8 +244,20 @@ Generated datasets write:
 Goal 1 runs write:
 
 - `dataset.jsonl`
-- `calls.jsonl`
+- `calls.jsonl`, appended incrementally after each completed model call
 - `scored_calls.jsonl`
 - `metrics_summary.csv`
 - `manifest.json`
 - run-local `figures/` after `carry-trace figures goal1`
+
+If a Goal 1 run exits before scoring completes, its manifest remains
+`status: running`. Re-running the same config automatically resumes the newest
+incomplete run with the same config hash, skips completed `(model, example)`
+calls already present in `calls.jsonl`, appends missing calls, then scores the
+completed artifact set.
+
+Generation records include `metadata.hit_token_limit` when a model exhausts
+its generation budget. Scored records expose this as top-level
+`hit_token_limit` and `generation_valid`; summaries also include token-limit
+hit counts/rates and valid-only accuracy/token averages for analysis that wants
+to exclude capped outputs.

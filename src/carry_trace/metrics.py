@@ -38,8 +38,12 @@ def score_records(
         parsed = output_digits_to_canonical(parsed_output, answer_format, base)
         decoded = normalize_answer(record.get("decoded_output"), base=base)
         first_lsd, first_msd = first_wrong_digit_positions(parsed, answer, base)
+        hit_token_limit = bool((record.get("metadata") or {}).get("hit_token_limit"))
+        generation_valid = not hit_token_limit
         scored_record = {
             **record,
+            "hit_token_limit": hit_token_limit,
+            "generation_valid": generation_valid,
             "exact_match": decoded == answer,
             "parsed_output": parsed_output,
             "expected_output": expected_output,
@@ -113,6 +117,15 @@ def summarize_goal1(
         how="left",
     )
     merged["has_carry"] = merged["carry_count"] > 0
+    merged["parsed_answer_correct_valid"] = merged["parsed_answer_correct"].where(
+        merged["generation_valid"]
+    )
+    merged["parsed_output_format_correct_valid"] = merged["parsed_output_format_correct"].where(
+        merged["generation_valid"]
+    )
+    merged["token_count_output_valid"] = merged["token_count_output"].where(
+        merged["generation_valid"]
+    )
     grouped = merged.groupby(
         [
             "model_name",
@@ -127,10 +140,16 @@ def summarize_goal1(
     )
     return grouped.agg(
         examples=("example_id", "count"),
+        valid_examples=("generation_valid", "sum"),
+        token_limit_hits=("hit_token_limit", "sum"),
+        token_limit_hit_rate=("hit_token_limit", "mean"),
         parsed_accuracy=("parsed_answer_correct", "mean"),
+        parsed_accuracy_valid=("parsed_answer_correct_valid", "mean"),
         output_format_accuracy=("parsed_output_format_correct", "mean"),
+        output_format_accuracy_valid=("parsed_output_format_correct_valid", "mean"),
         exact_match_accuracy=("exact_match", "mean"),
         avg_output_tokens=("token_count_output", "mean"),
+        avg_output_tokens_valid=("token_count_output_valid", "mean"),
         avg_latency_seconds=("latency_seconds", "mean"),
     ).reset_index()
 
