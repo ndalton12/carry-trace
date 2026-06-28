@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from random import Random
 from typing import Any
 
@@ -155,6 +155,76 @@ def generate_dataset(config: DatasetConfig) -> tuple[Path, Path, list[AdditionEx
     }
     write_json(manifest_path, manifest)
     return jsonl_path, manifest_path, rows
+
+
+def upload_dataset_to_hub(
+    dataset_dir: Path,
+    repo_id: str,
+    *,
+    path_in_repo: str | None = None,
+    private: bool = False,
+    revision: str | None = None,
+    create_pr: bool = False,
+    token: str | None = None,
+    commit_message: str | None = None,
+    create_repo: bool = True,
+) -> dict[str, str | None]:
+    """Upload one generated dataset directory into a subdirectory of a HF dataset repo."""
+    from huggingface_hub import HfApi
+
+    dataset_dir = dataset_dir.expanduser().resolve()
+    _validate_dataset_dir(dataset_dir)
+    upload_path = _validate_hub_dataset_path(path_in_repo or dataset_dir.name)
+    api = HfApi()
+
+    if create_repo:
+        api.create_repo(
+            repo_id=repo_id,
+            repo_type="dataset",
+            private=private,
+            exist_ok=True,
+            token=token,
+        )
+
+    commit_info = api.upload_folder(
+        repo_id=repo_id,
+        repo_type="dataset",
+        folder_path=dataset_dir,
+        path_in_repo=upload_path,
+        revision=revision,
+        create_pr=create_pr,
+        token=token,
+        commit_message=commit_message or f"Upload carry-trace dataset {dataset_dir.name}",
+        ignore_patterns=[".DS_Store"],
+    )
+    return {
+        "repo_id": repo_id,
+        "dataset_dir": str(dataset_dir),
+        "path_in_repo": upload_path,
+        "commit_url": str(getattr(commit_info, "commit_url", "")) or None,
+    }
+
+
+def _validate_dataset_dir(dataset_dir: Path) -> None:
+    """Validate that a path looks like a generated carry-trace dataset directory."""
+    if not dataset_dir.is_dir():
+        raise ValueError(f"dataset_dir must be a directory: {dataset_dir}")
+    missing = [
+        filename
+        for filename in ("examples.jsonl", "manifest.json")
+        if not (dataset_dir / filename).is_file()
+    ]
+    if missing:
+        raise ValueError(f"dataset_dir is missing required files: {', '.join(missing)}")
+
+
+def _validate_hub_dataset_path(path_in_repo: str) -> str:
+    """Validate the non-root HF repo path used for a local dataset upload."""
+    path = path_in_repo.strip("/")
+    parts = PurePosixPath(path).parts
+    if not path or path == "." or "\\" in path or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("path_in_repo must be a non-root relative path")
+    return path
 
 
 def _format_conditions(config: DatasetConfig) -> list[tuple[SliceName, DigitFormat, AnswerFormat]]:

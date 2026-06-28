@@ -1,24 +1,12 @@
 name: goal1_olmo3_smoke
 seed: 13
-dataset_path: data/generated/goal1_smoke/examples.jsonl
+dataset_path: data/generated/goal1_paper_like/examples.jsonl
 output_dir: runs
-# max_examples: 8
-splits:
-  - smoke
-# prompt_modes:
-#   - answer_only
-#   - structured_column_cot
-# digit_formats:
-#   - standard
-#   - delimited
-# answer_formats:
-#   - standard
-#   - lsd
 runner:
   kind: hf
   device: auto
   dtype: bfloat16
-  batch_size: 2
+  batch_size: 6
   trust_remote_code: false
   quantization: none
 models:

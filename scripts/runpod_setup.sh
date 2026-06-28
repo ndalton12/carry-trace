@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+apt-get update
+apt install rsync
+
 INSTALL_VLLM=0
 INSTALL_QUANTIZATION=0
 WARM_MODEL=""
@@ -50,6 +53,7 @@ fi
 
 export HF_HOME="${HF_HOME:-$DEFAULT_HF_HOME}"
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
+export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 mkdir -p "$HF_HOME"
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -69,6 +73,7 @@ cat > "$REPO_ROOT/.runpod_env" <<EOF
 export PATH="$REPO_ROOT/.uv-bin:\$PATH"
 export HF_HOME="$HF_HOME"
 export HF_XET_HIGH_PERFORMANCE="$HF_XET_HIGH_PERFORMANCE"
+export UV_LINK_MODE="$UV_LINK_MODE"
 EOF
 
 uv sync

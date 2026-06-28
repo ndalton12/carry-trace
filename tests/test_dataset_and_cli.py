@@ -1,5 +1,6 @@
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -13,7 +14,7 @@ from carry_trace.config import (
     ModelSpec,
     RunnerConfig,
 )
-from carry_trace.datasets import generate_dataset
+from carry_trace.datasets import generate_dataset, upload_dataset_to_hub
 from carry_trace.enums import (
     AnswerFormat,
     DigitFormat,
@@ -316,6 +317,107 @@ def test_cli_dataset_generate(tmp_path: Path) -> None:
         for row in rows
         if row["digit_format"] == "delimited" and row["answer_format"] == "lsd"
     ]
+
+
+def test_upload_dataset_to_hub_uses_dataset_name_as_subdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_dir = tmp_path / "goal1_paper_like"
+    dataset_dir.mkdir()
+    (dataset_dir / "examples.jsonl").write_text("{}\n", encoding="utf-8")
+    (dataset_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class DummyHfApi:
+        """Record Hugging Face API calls without using the network."""
+
+        def create_repo(self, **kwargs: object) -> None:
+            """Record a create_repo call."""
+            calls.append(("create_repo", kwargs))
+
+        def upload_folder(self, **kwargs: object) -> SimpleNamespace:
+            """Record an upload_folder call and return a dummy commit."""
+            calls.append(("upload_folder", kwargs))
+            return SimpleNamespace(commit_url="https://huggingface.co/datasets/me/repo/commit/abc")
+
+    monkeypatch.setattr("huggingface_hub.HfApi", DummyHfApi)
+
+    result = upload_dataset_to_hub(
+        dataset_dir,
+        "me/carry-trace-datasets",
+        token="fake-token",
+        private=True,
+    )
+
+    assert result["path_in_repo"] == "goal1_paper_like"
+    assert calls[0] == (
+        "create_repo",
+        {
+            "repo_id": "me/carry-trace-datasets",
+            "repo_type": "dataset",
+            "private": True,
+            "exist_ok": True,
+            "token": "fake-token",
+        },
+    )
+    assert calls[1][0] == "upload_folder"
+    assert calls[1][1]["folder_path"] == dataset_dir.resolve()
+    assert calls[1][1]["path_in_repo"] == "goal1_paper_like"
+    assert calls[1][1]["repo_type"] == "dataset"
+
+
+def test_upload_dataset_to_hub_rejects_root_path(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "goal1_paper_like"
+    dataset_dir.mkdir()
+    (dataset_dir / "examples.jsonl").write_text("{}\n", encoding="utf-8")
+    (dataset_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-root"):
+        upload_dataset_to_hub(dataset_dir, "me/repo", path_in_repo="/")
+
+
+def test_cli_dataset_upload_passes_nested_hub_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_dir = tmp_path / "goal1_paper_like"
+    dataset_dir.mkdir()
+    (dataset_dir / "examples.jsonl").write_text("{}\n", encoding="utf-8")
+    (dataset_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    def fake_upload_dataset_to_hub(*args: object, **kwargs: object) -> dict[str, str | None]:
+        """Record CLI upload arguments without using the network."""
+        calls.append({"args": args, "kwargs": kwargs})
+        return {
+            "repo_id": "me/carry-trace-datasets",
+            "dataset_dir": str(dataset_dir.resolve()),
+            "path_in_repo": "goal1_paper_like",
+            "commit_url": None,
+        }
+
+    monkeypatch.setattr("carry_trace.cli.upload_dataset_to_hub", fake_upload_dataset_to_hub)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "dataset",
+            "upload",
+            "--dataset-dir",
+            str(dataset_dir),
+            "--repo-id",
+            "me/carry-trace-datasets",
+            "--token",
+            "fake-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls[0]["args"] == (dataset_dir, "me/carry-trace-datasets")
+    assert calls[0]["kwargs"]["path_in_repo"] is None
+    assert calls[0]["kwargs"]["token"] == "fake-token"
+    assert "goal1_paper_like" in result.output
 
 
 def test_config_closed_fields_are_enums() -> None:

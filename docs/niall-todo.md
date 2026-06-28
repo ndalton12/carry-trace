@@ -1,17 +1,13 @@
 # TODO
 
+Todos
+* Save dataset to huggingface
+* Check real examples
+* Move on to goal 2
+
 Models to use
 * Instruct no RL: Olmo-3-7b-Instruct-SFT
 * Instruct + RL: Olmo-3-7b-Instruct
-
-Weekend
-
-Next week
-* Test run on Myriad
-* Real run on Myriad
-
-Stuff to run
-* Repeat for different checkpoints (base), think subset
 
 # Misc Notes
 * When using greedy decoding (do_sample=False), temperature is ignored, which is fine:

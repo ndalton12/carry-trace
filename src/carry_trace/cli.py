@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.json import JSON
 
 from carry_trace.config import load_dataset_config, load_experiment_config
-from carry_trace.datasets import generate_dataset
+from carry_trace.datasets import generate_dataset, upload_dataset_to_hub
 from carry_trace.figures import make_goal1_figures
 from carry_trace.inspect import inspect_tokenizer
 from carry_trace.runs import run_goal1
@@ -37,6 +37,53 @@ def dataset_generate(
     jsonl_path, manifest_path, rows = generate_dataset(dataset_config)
     console.print(f"Wrote {len(rows)} examples to {jsonl_path}")
     console.print(f"Wrote manifest to {manifest_path}")
+
+
+@dataset_app.command("upload")
+def dataset_upload(
+    dataset_dir: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
+    ],
+    repo_id: Annotated[str, typer.Option(help="Hugging Face dataset repo ID.")],
+    path_in_repo: Annotated[
+        str | None,
+        typer.Option(help="HF repo subdirectory. Defaults to the local dataset directory name."),
+    ] = None,
+    revision: Annotated[str | None, typer.Option(help="Target branch or revision.")] = None,
+    private: Annotated[
+        bool,
+        typer.Option(help="Create the dataset repo as private if needed."),
+    ] = False,
+    create_pr: Annotated[
+        bool,
+        typer.Option(help="Open a pull request instead of committing."),
+    ] = False,
+    token: Annotated[
+        str | None,
+        typer.Option(envvar="HF_TOKEN", help="Hugging Face token. Defaults to HF_TOKEN."),
+    ] = None,
+    commit_message: Annotated[str | None, typer.Option()] = None,
+    create_repo: Annotated[
+        bool,
+        typer.Option(help="Create the Hugging Face dataset repo if it does not exist."),
+    ] = True,
+) -> None:
+    """Upload a generated dataset directory into a HF dataset repo subdirectory."""
+    result = upload_dataset_to_hub(
+        dataset_dir,
+        repo_id,
+        path_in_repo=path_in_repo,
+        private=private,
+        revision=revision,
+        create_pr=create_pr,
+        token=token,
+        commit_message=commit_message,
+        create_repo=create_repo,
+    )
+    console.print(f"Uploaded {result['dataset_dir']} to {repo_id}/{result['path_in_repo']}")
+    if result["commit_url"]:
+        console.print(f"Commit: {result['commit_url']}")
 
 
 @run_app.command("goal1")

@@ -241,6 +241,24 @@ Generated datasets write:
 - `examples.parquet` when `write_parquet: true`
 - `manifest.json`
 
+Upload one generated dataset directory to a shared Hugging Face dataset repo:
+
+```bash
+uv run carry-trace dataset upload \
+  --dataset-dir data/generated/goal1_paper_like \
+  --repo-id <user-or-org>/carry-trace-datasets
+```
+
+The upload is nested by default. For the command above, the Hugging Face dataset
+repo receives:
+
+- `goal1_paper_like/examples.jsonl`
+- `goal1_paper_like/examples.parquet`
+- `goal1_paper_like/manifest.json`
+
+Set `HF_TOKEN` or pass `--token`; use `--path-in-repo` only when you want a
+different subdirectory name.
+
 Goal 1 runs write:
 
 - `dataset.jsonl`

@@ -58,3 +58,6 @@ Figures are produced only from saved run artifacts.
 ```bash
 uv run carry-trace inspect tokenizer --model-id allenai/Olmo-3-7B-Think
 ```
+
+## Datasets
+Available on HuggingFace [here](https://huggingface.co/datasets/nialldalton12/carry-trace/tree/main)
