@@ -1,7 +1,6 @@
 # TODO
 
 Todos
-* Save dataset to huggingface
 * Check real examples
 * Move on to goal 2
 

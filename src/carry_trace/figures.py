@@ -11,10 +11,16 @@ import seaborn as sns
 from carry_trace.io import ensure_dir, read_jsonl
 
 
-def make_goal1_figures(run_dir: Path, output_dir: Path | None = None) -> list[Path]:
+def make_goal1_figures(
+    run_dir: Path,
+    output_dir: Path | None = None,
+    include_token_limit_hits: bool = False,
+) -> list[Path]:
+    """Generate Goal 1 figures, excluding token-limit hits unless requested."""
     output_dir = ensure_dir(output_dir or run_dir / "figures")
     examples = pd.DataFrame(read_jsonl(run_dir / "dataset.jsonl"))
     records = pd.DataFrame(read_jsonl(run_dir / "scored_calls.jsonl"))
+    records = _filter_figure_records(records, include_token_limit_hits)
     merged = records.merge(
         examples[
             [
@@ -39,6 +45,20 @@ def make_goal1_figures(run_dir: Path, output_dir: Path | None = None) -> list[Pa
         _token_count_vs_accuracy(merged, output_dir),
     ]
     return [path for path in paths if path is not None]
+
+
+def _filter_figure_records(
+    records: pd.DataFrame,
+    include_token_limit_hits: bool,
+) -> pd.DataFrame:
+    """Return records eligible for plotting under the token-limit policy."""
+    if include_token_limit_hits or records.empty:
+        return records
+    if "generation_valid" in records:
+        return records[records["generation_valid"]].copy()
+    if "hit_token_limit" in records:
+        return records[~records["hit_token_limit"]].copy()
+    return records
 
 
 def _accuracy_heatmap(df: pd.DataFrame, output_dir: Path) -> Path | None:

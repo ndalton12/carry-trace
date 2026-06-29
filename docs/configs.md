@@ -268,6 +268,11 @@ Goal 1 runs write:
 - `manifest.json`
 - run-local `figures/` after `carry-trace figures goal1`
 
+Goal 1 figures exclude token-limit hits by default and therefore align with the
+valid-generation metrics in `metrics_summary.csv`, such as
+`parsed_accuracy_valid`. To include capped generations in diagnostic figures,
+pass `--include-token-limit-hits`.
+
 If a Goal 1 run exits before scoring completes, its manifest remains
 `status: running`. Re-running the same config automatically resumes the newest
 incomplete run with the same config hash, skips completed `(model, example)`

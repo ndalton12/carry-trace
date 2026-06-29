@@ -1,4 +1,4 @@
-name: goal1_olmo3_smoke
+name: goal1_olmo3_real
 seed: 13
 dataset_path: data/generated/goal1_paper_like/examples.jsonl
 output_dir: runs

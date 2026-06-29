@@ -101,12 +101,20 @@ def figures_goal1(
     run_id: Annotated[str, typer.Option(help="Run directory name under runs/, or a full path.")],
     runs_dir: Annotated[Path, typer.Option()] = Path("runs"),
     output_dir: Annotated[Path | None, typer.Option()] = None,
+    include_token_limit_hits: Annotated[
+        bool,
+        typer.Option(help="Include generations that exhausted the token budget."),
+    ] = False,
 ) -> None:
     """Generate Goal 1 figures from saved run artifacts."""
     run_dir = Path(run_id)
     if not run_dir.exists():
         run_dir = runs_dir / run_id
-    paths = make_goal1_figures(run_dir, output_dir)
+    paths = make_goal1_figures(
+        run_dir,
+        output_dir,
+        include_token_limit_hits=include_token_limit_hits,
+    )
     for path in paths:
         console.print(f"Wrote {path}")
 
