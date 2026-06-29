@@ -1,7 +1,6 @@
 # TODO
 
 Todos
-* Check real examples
 * Move on to goal 2
 
 Models to use

@@ -272,6 +272,16 @@ Goal 1 figures exclude token-limit hits by default and therefore align with the
 valid-generation metrics in `metrics_summary.csv`, such as
 `parsed_accuracy_valid`. To include capped generations in diagnostic figures,
 pass `--include-token-limit-hits`.
+The combined `accuracy_heatmap.png` averages over all models in the run; the
+figure command also writes `accuracy_heatmap_<model-name>.png` files split out
+by model.
+`token_budget_curves.png` replaces the raw token-count scatter with the fraction
+of examples both correct and completed within each output-token budget. By
+default, this figure uses one panel per digit length; pass
+`--no-token-budget-by-digit-length` to pool digit lengths in this figure.
+Prompt-mode and digit-format comparison bars show 95% confidence intervals.
+All figures use a shared paper-style theme, colorblind palette, white grid,
+300 DPI export, and display-formatted labels instead of raw enum names.
 
 If a Goal 1 run exits before scoring completes, its manifest remains
 `status: running`. Re-running the same config automatically resumes the newest

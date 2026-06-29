@@ -195,7 +195,8 @@ Primary metrics:
 Expected figures:
 
 - Accuracy heatmap: digits x carry-chain length.
-- Error localization: first wrong digit vs first carry-relevant column.
+- Error localization: among valid, parseable, incorrect carry-bearing examples,
+  share that fail before the first carry, at the first carry, or after it.
 - Prompt-mode comparison across direct-answer and elicited-reasoning regimes.
 - Digit-format and answer-format comparisons.
 - Token count vs accuracy.

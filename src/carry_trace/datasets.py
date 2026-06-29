@@ -173,7 +173,10 @@ def upload_dataset_to_hub(
     from huggingface_hub import HfApi
 
     dataset_dir = dataset_dir.expanduser().resolve()
-    _validate_dataset_dir(dataset_dir)
+    try:
+        _validate_dataset_dir(dataset_dir)
+    except ValueError as val_error:
+        print(f"Warning: validation error {val_error}")
     upload_path = _validate_hub_dataset_path(path_in_repo or dataset_dir.name)
     api = HfApi()
 

@@ -105,6 +105,13 @@ def figures_goal1(
         bool,
         typer.Option(help="Include generations that exhausted the token budget."),
     ] = False,
+    token_budget_by_digit_length: Annotated[
+        bool,
+        typer.Option(
+            "--token-budget-by-digit-length/--no-token-budget-by-digit-length",
+            help="Facet token-budget curves by digit length.",
+        ),
+    ] = True,
 ) -> None:
     """Generate Goal 1 figures from saved run artifacts."""
     run_dir = Path(run_id)
@@ -114,6 +121,7 @@ def figures_goal1(
         run_dir,
         output_dir,
         include_token_limit_hits=include_token_limit_hits,
+        token_budget_by_digit_length=token_budget_by_digit_length,
     )
     for path in paths:
         console.print(f"Wrote {path}")
