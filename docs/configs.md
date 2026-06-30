@@ -275,6 +275,9 @@ pass `--include-token-limit-hits`.
 The combined `accuracy_heatmap.png` averages over all models in the run; the
 figure command also writes `accuracy_heatmap_<model-name>.png` files split out
 by model.
+The comparison figures include `prompt_mode_comparison.png`,
+`digit_format_comparison.png`, `answer_format_comparison.png`, and
+`slice_type_comparison.png`.
 `token_budget_curves.png` replaces the raw token-count scatter with the fraction
 of examples both correct and completed within each output-token budget. By
 default, this figure uses one panel per digit length; pass
@@ -294,3 +297,52 @@ its generation budget. Scored records expose this as top-level
 `hit_token_limit` and `generation_valid`; summaries also include token-limit
 hit counts/rates and valid-only accuracy/token averages for analysis that wants
 to exclude capped outputs.
+
+## Goal 2 Activation Extraction
+
+Goal 2 runs use:
+
+```bash
+uv run carry-trace run goal2 --config configs/experiments/goal2_olmo3_7b_probe_smoke.yaml
+```
+
+The runner currently requires `runner.kind: hf` because hidden-state extraction
+uses Hugging Face `output_hidden_states=True`. Each example is generated first,
+then a teacher-forced forward pass over `prompt + generated_output` saves only
+the configured token locations across all transformer layers.
+
+Activation location options:
+
+- `operand_digits`
+- `question_token`
+- `prompt_final`
+- `cot_start`
+- `cot_1_3`
+- `cot_2_3`
+- `cot_end`
+- `answer_digits`
+
+Activation storage settings:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `storage_dtype` | `auto`, `float16`, `bfloat16`, or `float32` | Dtype used when saving activation tensors. `auto` keeps the model hidden-state dtype; `float16` is the default and is usually the best storage/runtime tradeoff. |
+| `include_embedding_layer` | boolean | When `false`, save only transformer-layer outputs. When `true`, also save the embedding hidden state as layer `embedding`. |
+
+Goal 2 runs write:
+
+- `dataset.jsonl`
+- `activations.jsonl`, appended incrementally after each saved tensor
+- `activations/<model-name>/<example-id>.pt`
+- `manifest.json`
+
+Each tensor file stores `activations` with shape
+`[locations, layers, hidden_size]`; by default `layers` excludes the embedding
+state and includes every transformer layer. Re-running the same config resumes
+the newest incomplete run with the same config hash and skips activation rows
+whose tensor files already exist.
+
+Set `upload.enabled: true` and `upload.repo_id: <user-or-org>/<dataset-repo>`
+to upload the completed run directory to a Hugging Face dataset repo after local
+extraction finishes. Upload is best-effort: a Hub failure is recorded in the
+local manifest without invalidating the completed local run.

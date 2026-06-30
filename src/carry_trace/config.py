@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from carry_trace.enums import (
+    ActivationLocation,
     AnswerFormat,
     DigitFormat,
     PromptMode,
@@ -124,6 +125,64 @@ class ExperimentConfig(BaseModel):
     generation: GenerationParams = Field(default_factory=GenerationParams)
 
 
+class ActivationExtractionConfig(BaseModel):
+    """Goal 2 activation extraction settings."""
+
+    locations: list[ActivationLocation] = Field(
+        default_factory=lambda: [
+            ActivationLocation.OPERAND_DIGITS,
+            ActivationLocation.QUESTION_TOKEN,
+            ActivationLocation.PROMPT_FINAL,
+            ActivationLocation.COT_START,
+            ActivationLocation.COT_1_3,
+            ActivationLocation.COT_2_3,
+            ActivationLocation.COT_END,
+            ActivationLocation.ANSWER_DIGITS,
+        ]
+    )
+    storage_dtype: TorchDType = TorchDType.FLOAT16
+    include_embedding_layer: bool = False
+
+
+class HubUploadConfig(BaseModel):
+    """Optional Hugging Face Hub upload settings for run artifacts."""
+
+    enabled: bool = False
+    repo_id: str | None = None
+    path_in_repo: str | None = None
+    revision: str | None = None
+    private: bool = False
+    create_pr: bool = False
+    create_repo: bool = True
+    commit_message: str | None = None
+
+    @model_validator(mode="after")
+    def validate_repo_id(self) -> HubUploadConfig:
+        """Require a repository ID when Hub upload is enabled."""
+        if self.enabled and not self.repo_id:
+            raise ValueError("upload.repo_id is required when upload.enabled is true")
+        return self
+
+
+class Goal2Config(BaseModel):
+    """Goal 2 activation extraction run configuration."""
+
+    name: str
+    seed: int = 0
+    dataset_path: Path
+    output_dir: Path = Path("runs")
+    max_examples: int | None = None
+    splits: list[str] | None = None
+    prompt_modes: list[PromptMode] | None = None
+    digit_formats: list[DigitFormat] | None = None
+    answer_formats: list[AnswerFormat] | None = None
+    models: list[ModelSpec] = Field(default_factory=list)
+    runner: RunnerConfig = Field(default_factory=RunnerConfig)
+    generation: GenerationParams = Field(default_factory=GenerationParams)
+    activations: ActivationExtractionConfig = Field(default_factory=ActivationExtractionConfig)
+    upload: HubUploadConfig = Field(default_factory=HubUploadConfig)
+
+
 def load_yaml_config(path: Path) -> dict[str, object]:
     """Load a YAML config file as a mapping."""
     with path.open("r", encoding="utf-8") as handle:
@@ -141,3 +200,8 @@ def load_dataset_config(path: Path) -> DatasetConfig:
 def load_experiment_config(path: Path) -> ExperimentConfig:
     """Load and validate an experiment config from YAML."""
     return ExperimentConfig.model_validate(load_yaml_config(path))
+
+
+def load_goal2_config(path: Path) -> Goal2Config:
+    """Load and validate a Goal 2 config from YAML."""
+    return Goal2Config.model_validate(load_yaml_config(path))

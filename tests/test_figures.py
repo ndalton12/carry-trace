@@ -23,6 +23,8 @@ def test_goal1_figures_exclude_token_limit_hits_by_default(
         "_accuracy_heatmap",
         "_prompt_mode_comparison",
         "_digit_format_comparison",
+        "_answer_format_comparison",
+        "_slice_type_comparison",
         "_error_localization_plot",
         "_token_budget_curves",
     ):
@@ -30,8 +32,8 @@ def test_goal1_figures_exclude_token_limit_hits_by_default(
 
     paths = figures.make_goal1_figures(run_dir)
 
-    assert len(paths) == 6
-    assert row_counts == [1, 1, 1, 1, 1, 1]
+    assert len(paths) == 8
+    assert row_counts == [1, 1, 1, 1, 1, 1, 1, 1]
 
 
 def test_goal1_figures_can_include_token_limit_hits(
@@ -51,6 +53,8 @@ def test_goal1_figures_can_include_token_limit_hits(
         "_accuracy_heatmap",
         "_prompt_mode_comparison",
         "_digit_format_comparison",
+        "_answer_format_comparison",
+        "_slice_type_comparison",
         "_error_localization_plot",
         "_token_budget_curves",
     ):
@@ -58,8 +62,8 @@ def test_goal1_figures_can_include_token_limit_hits(
 
     paths = figures.make_goal1_figures(run_dir, include_token_limit_hits=True)
 
-    assert len(paths) == 6
-    assert row_counts == [2, 2, 2, 2, 2, 2]
+    assert len(paths) == 8
+    assert row_counts == [2, 2, 2, 2, 2, 2, 2, 2]
 
 
 def test_goal1_figures_add_per_model_accuracy_heatmaps(tmp_path: Path) -> None:
@@ -95,6 +99,8 @@ def test_goal1_figures_add_per_model_accuracy_heatmaps(tmp_path: Path) -> None:
     assert "accuracy_heatmap.png" in filenames
     assert "accuracy_heatmap_olmo_3_32b_instruct.png" in filenames
     assert "accuracy_heatmap_qwen-rlvr.png" in filenames
+    assert "answer_format_comparison.png" in filenames
+    assert "slice_type_comparison.png" in filenames
 
 
 def test_comparison_figures_use_95_percent_confidence_intervals(
@@ -114,12 +120,16 @@ def test_comparison_figures_use_95_percent_confidence_intervals(
             {
                 "prompt_mode": "answer_only",
                 "digit_format": "standard",
+                "answer_format": "standard",
+                "slice_name": "no_carry",
                 "model_name": "model",
                 "parsed_answer_correct": True,
             },
             {
                 "prompt_mode": "free_cot",
                 "digit_format": "delimited",
+                "answer_format": "lsd",
+                "slice_name": "long_carry_chain",
                 "model_name": "model",
                 "parsed_answer_correct": False,
             },
@@ -128,9 +138,18 @@ def test_comparison_figures_use_95_percent_confidence_intervals(
 
     figures._prompt_mode_comparison(df, tmp_path)
     figures._digit_format_comparison(df, tmp_path)
+    figures._answer_format_comparison(df, tmp_path)
+    figures._slice_type_comparison(df, tmp_path)
 
-    assert [call["errorbar"] for call in calls] == [("ci", 95), ("ci", 95)]
+    assert [call["errorbar"] for call in calls] == [
+        ("ci", 95),
+        ("ci", 95),
+        ("ci", 95),
+        ("ci", 95),
+    ]
     assert [call["err_kws"] for call in calls] == [
+        {"color": "#222222", "linewidth": 1.1},
+        {"color": "#222222", "linewidth": 1.1},
         {"color": "#222222", "linewidth": 1.1},
         {"color": "#222222", "linewidth": 1.1},
     ]
@@ -153,12 +172,16 @@ def test_figure_display_labels_are_human_readable(
             {
                 "prompt_mode": "answer_only",
                 "digit_format": "standard",
+                "answer_format": "standard",
+                "slice_name": "no_carry",
                 "model_name": "model",
                 "parsed_answer_correct": True,
             },
             {
                 "prompt_mode": "free_cot",
                 "digit_format": "delimited",
+                "answer_format": "lsd",
+                "slice_name": "many_9s_no_carry",
                 "model_name": "model",
                 "parsed_answer_correct": False,
             },
@@ -167,9 +190,13 @@ def test_figure_display_labels_are_human_readable(
 
     figures._prompt_mode_comparison(df, tmp_path)
     figures._digit_format_comparison(df, tmp_path)
+    figures._answer_format_comparison(df, tmp_path)
+    figures._slice_type_comparison(df, tmp_path)
 
     assert list(calls[0]["prompt_mode"]) == ["Answer Only", "Free CoT"]
     assert list(calls[1]["digit_format"]) == ["Standard", "Delimited"]
+    assert list(calls[2]["answer_format"]) == ["Standard", "LSD"]
+    assert list(calls[3]["slice_name"]) == ["No Carry", "Many 9s No Carry"]
     assert figures._display_label("model_name") == "Model Name"
 
 
@@ -323,6 +350,7 @@ def _write_figure_run(tmp_path: Path) -> Path:
                 "id": "ex-valid",
                 "prompt_mode": "answer_only",
                 "digit_format": "standard",
+                "answer_format": "standard",
                 "slice_name": "no_carry",
                 "n_digits": 2,
                 "max_carry_chain": 0,
@@ -332,6 +360,7 @@ def _write_figure_run(tmp_path: Path) -> Path:
                 "id": "ex-capped",
                 "prompt_mode": "answer_only",
                 "digit_format": "standard",
+                "answer_format": "standard",
                 "slice_name": "no_carry",
                 "n_digits": 2,
                 "max_carry_chain": 0,

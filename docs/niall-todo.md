@@ -1,7 +1,7 @@
 # TODO
 
 Todos
-* Move on to goal 2
+* Collect activations and upload to HF
 
 Models to use
 * Instruct no RL: Olmo-3-7b-Instruct-SFT

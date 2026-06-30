@@ -57,6 +57,19 @@ class RunnerKind(StrEnum):
     VLLM = "vllm"
 
 
+class ActivationLocation(StrEnum):
+    """Symbolic token locations supported by Goal 2 activation extraction."""
+
+    OPERAND_DIGITS = "operand_digits"
+    QUESTION_TOKEN = "question_token"
+    PROMPT_FINAL = "prompt_final"
+    COT_START = "cot_start"
+    COT_1_3 = "cot_1_3"
+    COT_2_3 = "cot_2_3"
+    COT_END = "cot_end"
+    ANSWER_DIGITS = "answer_digits"
+
+
 class QuantizationKind(StrEnum):
     """Model quantization modes supported by runners."""
     NONE = "none"

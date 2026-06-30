@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-apt-get update
+apt update
 apt install rsync
 
 INSTALL_VLLM=0

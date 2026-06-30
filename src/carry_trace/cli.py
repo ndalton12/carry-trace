@@ -9,9 +9,10 @@ import typer
 from rich.console import Console
 from rich.json import JSON
 
-from carry_trace.config import load_dataset_config, load_experiment_config
+from carry_trace.config import load_dataset_config, load_experiment_config, load_goal2_config
 from carry_trace.datasets import generate_dataset, upload_dataset_to_hub
 from carry_trace.figures import make_goal1_figures
+from carry_trace.goal2 import run_goal2
 from carry_trace.inspect import inspect_tokenizer
 from carry_trace.runs import run_goal1
 
@@ -94,6 +95,16 @@ def run_goal1_command(
     experiment_config = load_experiment_config(config)
     run_dir = run_goal1(experiment_config)
     console.print(f"Wrote run artifacts to {run_dir}")
+
+
+@run_app.command("goal2")
+def run_goal2_command(
+    config: Annotated[Path, typer.Option(exists=True, readable=True)],
+) -> None:
+    """Run Goal 2 activation extraction."""
+    goal2_config = load_goal2_config(config)
+    run_dir = run_goal2(goal2_config)
+    console.print(f"Wrote activation artifacts to {run_dir}")
 
 
 @figures_app.command("goal1")

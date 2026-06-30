@@ -199,6 +199,7 @@ Expected figures:
   share that fail before the first carry, at the first carry, or after it.
 - Prompt-mode comparison across direct-answer and elicited-reasoning regimes.
 - Digit-format and answer-format comparisons.
+- Slice-type accuracy comparison.
 - Token count vs accuracy.
 
 Minimum publishable result:

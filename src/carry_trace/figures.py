@@ -49,6 +49,13 @@ DISPLAY_LABELS = {
     "standard": "Standard",
     "delimited": "Delimited",
     "lsd": "LSD",
+    "no_carry": "No Carry",
+    "isolated_carry": "Isolated Carry",
+    "long_carry_chain": "Long Carry Chain",
+    "internal_carry_chain": "Internal Carry Chain",
+    "carry_distractor": "Carry Distractor",
+    "many_9s_no_carry": "Many 9s No Carry",
+    "random": "Random",
 }
 PAPER_STYLE_RC = {
     "axes.edgecolor": "#333333",
@@ -82,6 +89,7 @@ def make_goal1_figures(
                 "id",
                 "prompt_mode",
                 "digit_format",
+                "answer_format",
                 "slice_name",
                 "n_digits",
                 "max_carry_chain",
@@ -97,6 +105,8 @@ def make_goal1_figures(
         *_accuracy_heatmaps_by_model(merged, output_dir),
         _prompt_mode_comparison(merged, output_dir),
         _digit_format_comparison(merged, output_dir),
+        _answer_format_comparison(merged, output_dir),
+        _slice_type_comparison(merged, output_dir),
         _error_localization_plot(merged, output_dir),
         _token_budget_curves(
             merged,
@@ -574,4 +584,59 @@ def _digit_format_comparison(df: pd.DataFrame, output_dir: Path) -> Path | None:
     _format_legend(ax)
     sns.despine(fig=fig, ax=ax)
     path = output_dir / "digit_format_comparison.png"
+    return _save_figure(fig, path)
+
+
+def _answer_format_comparison(df: pd.DataFrame, output_dir: Path) -> Path | None:
+    """Generate an accuracy comparison by answer format."""
+    if df.empty or "answer_format" not in df:
+        return None
+    plot_df = _with_display_labels(df, ["answer_format"])
+    fig, ax = plt.subplots(figsize=COMPARISON_FIGSIZE)
+    sns.barplot(
+        data=plot_df,
+        x="answer_format",
+        y="parsed_answer_correct",
+        hue="model_name",
+        errorbar=COMPARISON_ERRORBAR,
+        palette=_model_palette(plot_df),
+        capsize=0.08,
+        err_kws=COMPARISON_ERR_KWS,
+        ax=ax,
+    )
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Answer Format")
+    ax.set_ylabel("Parsed Answer Accuracy")
+    ax.grid(axis="x", visible=False)
+    _format_legend(ax)
+    sns.despine(fig=fig, ax=ax)
+    path = output_dir / "answer_format_comparison.png"
+    return _save_figure(fig, path)
+
+
+def _slice_type_comparison(df: pd.DataFrame, output_dir: Path) -> Path | None:
+    """Generate an accuracy comparison by dataset slice type."""
+    if df.empty or "slice_name" not in df:
+        return None
+    plot_df = _with_display_labels(df, ["slice_name"])
+    fig, ax = plt.subplots(figsize=COMPARISON_FIGSIZE)
+    sns.barplot(
+        data=plot_df,
+        x="slice_name",
+        y="parsed_answer_correct",
+        hue="model_name",
+        errorbar=COMPARISON_ERRORBAR,
+        palette=_model_palette(plot_df),
+        capsize=0.08,
+        err_kws=COMPARISON_ERR_KWS,
+        ax=ax,
+    )
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Slice Type")
+    ax.set_ylabel("Parsed Answer Accuracy")
+    ax.grid(axis="x", visible=False)
+    ax.tick_params(axis="x", rotation=25)
+    _format_legend(ax)
+    sns.despine(fig=fig, ax=ax)
+    path = output_dir / "slice_type_comparison.png"
     return _save_figure(fig, path)
