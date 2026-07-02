@@ -21,6 +21,6 @@ if [[ "$SRC" != *:* ]]; then
 fi
 
 mkdir -p "$LOCAL_OUTPUT_DIR"
-rsync -e "ssh -p $PORT" -az "${SRC%/}/runs/" "$LOCAL_OUTPUT_DIR/"
+rsync --progress -e "ssh -p $PORT" -az "${SRC%/}/runs/" "$LOCAL_OUTPUT_DIR/"
 
 echo "Synced RunPod runs to $LOCAL_OUTPUT_DIR"

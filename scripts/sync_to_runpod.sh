@@ -30,7 +30,7 @@ rsync -az --no-owner --no-group \
   ./ "$DEST"
 
 if [ -d data ]; then
-  rsync -e "ssh -p $PORT" -az --no-owner --no-group data/ "${DEST%/}/data/"
+  rsync --progress -e "ssh -p $PORT" -az --no-owner --no-group data/ "${DEST%/}/data/"
 fi
 
 echo "Synced repo and data to $DEST"

@@ -1,7 +1,7 @@
 # TODO
 
 Todos
-* Collect activations and upload to HF
+* Analyze activations with probing across layers, generate figures
 
 Models to use
 * Instruct no RL: Olmo-3-7b-Instruct-SFT

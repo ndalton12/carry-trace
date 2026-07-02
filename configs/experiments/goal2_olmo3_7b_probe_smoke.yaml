@@ -14,7 +14,7 @@ models:
     model_id: allenai/Olmo-3-7B-Instruct
 runner:
   kind: hf
-  device: auto
+  device: cuda
   dtype: bfloat16
   batch_size: 6
 generation:
