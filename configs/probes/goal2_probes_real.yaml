@@ -1,0 +1,20 @@
+name: goal2_probes_real
+goal2_run_dir: runs/runpod/goal2_olmo3_real-2026-07-01T200139.108117Z0000
+output_dir: runs/probes
+train_split: train_probe
+test_split: test_probe
+targets:
+  - any_carry
+  - incoming_carry
+  - outgoing_carry
+  - output_digit
+  - raw_sum
+  - carry_chain_membership
+  - column_pointer
+min_train_examples: 20
+min_test_examples: 5
+max_iter: 1000
+c: 1.0
+random_state: 0
+require_unambiguous_digit_tokens: false
+n_jobs: 8

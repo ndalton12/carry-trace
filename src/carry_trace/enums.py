@@ -70,6 +70,18 @@ class ActivationLocation(StrEnum):
     ANSWER_DIGITS = "answer_digits"
 
 
+class ProbeTarget(StrEnum):
+    """Goal 2 linear-probe prediction targets."""
+
+    ANY_CARRY = "any_carry"
+    INCOMING_CARRY = "incoming_carry"
+    OUTGOING_CARRY = "outgoing_carry"
+    OUTPUT_DIGIT = "output_digit"
+    RAW_SUM = "raw_sum"
+    CARRY_CHAIN_MEMBERSHIP = "carry_chain_membership"
+    COLUMN_POINTER = "column_pointer"
+
+
 class QuantizationKind(StrEnum):
     """Model quantization modes supported by runners."""
     NONE = "none"

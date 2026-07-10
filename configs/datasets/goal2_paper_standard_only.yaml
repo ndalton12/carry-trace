@@ -1,0 +1,24 @@
+name: goal2_paper_standard_only
+seed: 20260601
+base: 10
+output_dir: data/generated
+write_parquet: false
+schema_version: goal2.v1
+splits:
+  train_probe:
+    examples_per_slice_per_length: 64
+  test_probe:
+    examples_per_slice_per_length: 64
+digit_lengths: [2, 4, 6]
+slices:
+  - random
+prompt_modes:
+  - answer_only
+  - free_cot
+digit_formats:
+  - standard
+answer_formats:
+  - standard
+digit_delimiter: "|"
+random_sampling:
+  balance_carry_count: true

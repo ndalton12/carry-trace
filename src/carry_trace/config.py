@@ -12,6 +12,7 @@ from carry_trace.enums import (
     ActivationLocation,
     AnswerFormat,
     DigitFormat,
+    ProbeTarget,
     PromptMode,
     QuantizationKind,
     RunnerKind,
@@ -183,6 +184,34 @@ class Goal2Config(BaseModel):
     upload: HubUploadConfig = Field(default_factory=HubUploadConfig)
 
 
+class Goal2ProbeConfig(BaseModel):
+    """Goal 2 linear-probe training and evaluation configuration."""
+
+    name: str
+    goal2_run_dir: Path
+    output_dir: Path = Path("runs/probes")
+    train_split: str = "train_probe"
+    test_split: str = "test_probe"
+    targets: list[ProbeTarget] = Field(
+        default_factory=lambda: [
+            ProbeTarget.ANY_CARRY,
+            ProbeTarget.INCOMING_CARRY,
+            ProbeTarget.OUTGOING_CARRY,
+            ProbeTarget.OUTPUT_DIGIT,
+            ProbeTarget.RAW_SUM,
+            ProbeTarget.CARRY_CHAIN_MEMBERSHIP,
+            ProbeTarget.COLUMN_POINTER,
+        ]
+    )
+    min_train_examples: int = Field(default=20, ge=1)
+    min_test_examples: int = Field(default=5, ge=1)
+    max_iter: int = Field(default=1000, gt=0)
+    c: float = Field(default=1.0, gt=0)
+    random_state: int = 0
+    require_unambiguous_digit_tokens: bool = False
+    n_jobs: int = Field(default=1, ge=1)
+
+
 def load_yaml_config(path: Path) -> dict[str, object]:
     """Load a YAML config file as a mapping."""
     with path.open("r", encoding="utf-8") as handle:
@@ -205,3 +234,8 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
 def load_goal2_config(path: Path) -> Goal2Config:
     """Load and validate a Goal 2 config from YAML."""
     return Goal2Config.model_validate(load_yaml_config(path))
+
+
+def load_goal2_probe_config(path: Path) -> Goal2ProbeConfig:
+    """Load and validate a Goal 2 linear-probe config from YAML."""
+    return Goal2ProbeConfig.model_validate(load_yaml_config(path))

@@ -9,10 +9,16 @@ import typer
 from rich.console import Console
 from rich.json import JSON
 
-from carry_trace.config import load_dataset_config, load_experiment_config, load_goal2_config
+from carry_trace.config import (
+    load_dataset_config,
+    load_experiment_config,
+    load_goal2_config,
+    load_goal2_probe_config,
+)
 from carry_trace.datasets import generate_dataset, upload_dataset_to_hub
-from carry_trace.figures import make_goal1_figures
+from carry_trace.figures import make_goal1_figures, make_goal2_probe_figures
 from carry_trace.goal2 import run_goal2
+from carry_trace.goal2_probes import run_goal2_probes
 from carry_trace.inspect import inspect_tokenizer
 from carry_trace.runs import run_goal1
 
@@ -20,12 +26,14 @@ app = typer.Typer(help="Reproducible carry-trace experiments.")
 dataset_app = typer.Typer(help="Dataset commands.")
 run_app = typer.Typer(help="Experiment run commands.")
 figures_app = typer.Typer(help="Figure commands.")
+probe_app = typer.Typer(help="Probe commands.")
 inspect_app = typer.Typer(help="Inspection commands.")
 console = Console()
 
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(run_app, name="run")
 app.add_typer(figures_app, name="figures")
+app.add_typer(probe_app, name="probe")
 app.add_typer(inspect_app, name="inspect")
 
 
@@ -107,6 +115,16 @@ def run_goal2_command(
     console.print(f"Wrote activation artifacts to {run_dir}")
 
 
+@probe_app.command("goal2")
+def probe_goal2_command(
+    config: Annotated[Path, typer.Option(exists=True, readable=True)],
+) -> None:
+    """Train Goal 2 linear probes from saved activations."""
+    probe_config = load_goal2_probe_config(config)
+    probe_dir = run_goal2_probes(probe_config, show_progress=True)
+    console.print(f"Wrote probe artifacts to {probe_dir}")
+
+
 @figures_app.command("goal1")
 def figures_goal1(
     run_id: Annotated[str, typer.Option(help="Run directory name under runs/, or a full path.")],
@@ -134,6 +152,24 @@ def figures_goal1(
         include_token_limit_hits=include_token_limit_hits,
         token_budget_by_digit_length=token_budget_by_digit_length,
     )
+    for path in paths:
+        console.print(f"Wrote {path}")
+
+
+@figures_app.command("goal2")
+def figures_goal2(
+    probe_id: Annotated[
+        str,
+        typer.Option(help="Probe run directory name under runs/probes/, or a full path."),
+    ],
+    probes_dir: Annotated[Path, typer.Option()] = Path("runs/probes"),
+    output_dir: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Generate Goal 2 figures from saved linear-probe artifacts."""
+    probe_dir = Path(probe_id)
+    if not probe_dir.exists():
+        probe_dir = probes_dir / probe_id
+    paths = make_goal2_probe_figures(probe_dir, output_dir)
     for path in paths:
         console.print(f"Wrote {path}")
 

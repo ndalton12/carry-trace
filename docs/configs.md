@@ -346,3 +346,108 @@ Set `upload.enabled: true` and `upload.repo_id: <user-or-org>/<dataset-repo>`
 to upload the completed run directory to a Hugging Face dataset repo after local
 extraction finishes. Upload is best-effort: a Hub failure is recorded in the
 local manifest without invalidating the completed local run.
+
+## Goal 2 Linear Probes
+
+Goal 2 probes use saved activation runs:
+
+```bash
+uv run carry-trace probe goal2 --config configs/probes/goal2_linear_smoke.yaml
+```
+
+The probe runner trains logistic-regression linear probes from saved hidden
+states, using dataset split names to separate train and test rows. By default
+it uses `train_probe` for training and `test_probe` for evaluation.
+Aggregate targets train one probe per `model_name x target x location_kind x
+layer_index`. Column-specific targets train one probe per `model_name x target
+x target_column_lsd x location_kind x layer_index`, so every saved location can
+be tested for whether column `i` is decodable.
+
+Probe config fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Probe run-name prefix. |
+| `goal2_run_dir` | path | Completed Goal 2 activation run directory. |
+| `output_dir` | path | Parent directory for probe artifacts. Defaults to `runs/probes`. |
+| `train_split` | string | Dataset split used to train probes. Defaults to `train_probe`. |
+| `test_split` | string | Dataset split used to evaluate probes. Defaults to `test_probe`. |
+| `targets` | list of `ProbeTarget` | Probe targets. Defaults to all supported targets. |
+| `min_train_examples` | integer | Minimum train samples required to fit a probe group. |
+| `min_test_examples` | integer | Minimum test samples required to evaluate a probe group. |
+| `max_iter` | integer | Maximum iterations for sklearn logistic regression. |
+| `c` | float | Inverse regularization strength for sklearn logistic regression. |
+| `random_state` | integer | Logistic-regression random state. |
+| `require_unambiguous_digit_tokens` | boolean | When true, column-specific targets skip digit locations where multiple digit locations resolved to the same token. Defaults to `false`. |
+| `n_jobs` | integer | Number of thread-pool workers used to fit independent probe groups. Defaults to `1`. |
+
+Allowed `ProbeTarget` values:
+
+| Value | Meaning |
+| --- | --- |
+| `any_carry` | Binary label for whether the problem has any carry-producing column. Usable at every saved location. |
+| `incoming_carry` | Binary per-column label `incoming_carry[i]`. |
+| `outgoing_carry` | Binary per-column label `outgoing_carry[i]`. |
+| `output_digit` | Multiclass per-column label `output_digits_lsd[i]`, including the final carry digit when present. |
+| `raw_sum` | Multiclass per-column label `raw_sum[i]`, the operand digit sum before incoming carry. |
+| `carry_chain_membership` | Binary per-column label for whether column `i` has either incoming or outgoing carry. |
+| `column_pointer` | Binary per-column one-hot label for `i == first_carry_position`; all zeros when no carry occurs. |
+
+Probe training excludes activation records whose generation metadata has
+`hit_token_limit: true`, so capped outputs do not enter train or test metrics.
+CoT-derived locations (`cot_start`, `cot_1_3`, `cot_2_3`, and `cot_end`) are
+used only for examples whose `prompt_mode` is `free_cot`; they are ignored for
+answer-only examples even if the model generated extra text.
+For column-specific targets, the default ambiguity guard drops digit-indexed
+samples where multiple digit locations share one tokenizer token. This avoids
+training the same activation against potentially conflicting column labels when
+the tokenizer merged multiple digits into one token. The default is `false`
+because merged digit tokens are part of the tokenization effect we usually want
+to measure. Probe artifacts record `target_column_lsd`, `location_lsd_index`,
+and `same_column` so analyses can separate same-column, cross-column, and
+non-column locations.
+
+Goal 2 probe runs write:
+
+- `probe_metrics.jsonl`
+- `probe_predictions.jsonl`
+- `manifest.json`
+- run-local `figures/` after `carry-trace figures goal2`
+
+Goal 2 probe figures are generated with:
+
+```bash
+uv run carry-trace figures goal2 --probe-id <probe-run-id>
+```
+
+The figure command organizes Goal 2 plots into subdirectories under
+`figures/`.
+
+`figures/summary/` contains compact paper-facing summaries:
+
+- `goal2_target_summary_matrix_<model>.png`: target-by-location matrix using
+  accuracy above majority baseline, averaged over columns after selecting the
+  best layer.
+- `goal2_target_summary_delta_<model_a>_minus_<model_b>.png`: two-model
+  target-by-location difference in accuracy above majority baseline. When the
+  models are identifiable as Full and SFT, this uses Full minus SFT.
+- `goal2_carry_column_facets.png`: outgoing-carry decoding over layers, faceted
+  by target column.
+- `goal2_carry_column_facets_delta_<model_a>_minus_<model_b>.png`: two-model
+  outgoing-carry decoding difference over layers, faceted by target column.
+- `goal2_reasoning_time_by_column.png`: carry-chain decoding across prompt/CoT
+  locations, grouped by low/mid/high columns.
+- `goal2_reasoning_time_by_column_delta_<model_a>_minus_<model_b>.png`:
+  two-model carry-chain decoding difference across prompt/CoT locations.
+- `goal2_layer_profile_by_target_free_cot.png`: target-faceted free-CoT layer
+  profiles at `prompt_final`, `cot_2_3`, and `answer_digits`, with model
+  encoded by color and location encoded by marker shape.
+
+`figures/diagnostics/` contains diagnostic per-target layer-location heatmaps,
+two-model delta heatmaps, layer trajectories, and timing curves:
+
+- `linear_probe_delta_heatmap_<model_a>_minus_<model_b>_<target>.png`:
+  per-target layer-by-location difference in accuracy above majority baseline.
+
+Probe heatmaps intentionally omit numeric cell annotations because the expanded
+per-column target set makes annotated cells too busy for paper figures.

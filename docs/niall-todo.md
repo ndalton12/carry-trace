@@ -1,7 +1,7 @@
 # TODO
 
 Todos
-* Analyze activations with probing across layers, generate figures
+* Move new metric generate to probe generation code, regenerate probe metrics
 
 Models to use
 * Instruct no RL: Olmo-3-7b-Instruct-SFT

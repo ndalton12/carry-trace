@@ -1,0 +1,36 @@
+name: goal2_olmo3_real_standard_only
+seed: 20260629
+dataset_path: data/generated/goal2_paper_standard_only/examples.jsonl
+output_dir: runs
+models:
+  - name: olmo3-instruct-sft
+    model_id: allenai/Olmo-3-7B-Instruct-SFT
+  - name: olmo3-instruct-full
+    model_id: allenai/Olmo-3-7B-Instruct
+runner:
+  kind: hf
+  device: cuda
+  dtype: bfloat16
+  batch_size: 6
+generation:
+  max_new_tokens: 2048
+  temperature: 0.6
+  top_p: 0.95
+  do_sample: true
+  thinking_final_answer_tokens: 100
+  force_close_thinking: false
+activations:
+  storage_dtype: bfloat16
+  include_embedding_layer: false
+  locations:
+    - operand_digits
+    - question_token
+    - prompt_final
+    - cot_start
+    - cot_1_3
+    - cot_2_3
+    - cot_end
+    - answer_digits
+upload:
+  enabled: true
+  repo_id: "nialldalton12/carry-trace"

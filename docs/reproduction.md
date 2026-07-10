@@ -23,9 +23,10 @@ Run
 ```
 uv run carry-trace dataset generate --config configs/datasets/goal2_paper.yaml
 uv run carry-trace run goal2 --config configs/experiments/goal2_olmo3_real.yaml
+uv run carry-trace probe goal2 --config configs/probes/goal2_probes_real.yaml
 ```
 
 To produce figures:
 ```
-uv run carry-trace figures goal2 --run-id <directory within runs/>
+uv run carry-trace figures goal2 --probe-id <directory within runs/probes/>
 ```
