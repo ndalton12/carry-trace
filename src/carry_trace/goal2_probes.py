@@ -15,6 +15,14 @@ from tqdm.auto import tqdm
 
 from carry_trace.config import Goal2ProbeConfig
 from carry_trace.enums import ProbeTarget
+from carry_trace.goal2_probe_analysis import (
+    GOAL2_BOOTSTRAP_METRICS_FILENAME,
+    GOAL2_FIGURE_METRICS_FILENAME,
+    GOAL2_PROBE_ANALYSIS_SCHEMA_VERSION,
+    GOAL2_SHARED_SLICE_METRICS_FILENAME,
+    GOAL2_SLICE_METRICS_FILENAME,
+    build_goal2_probe_analysis,
+)
 from carry_trace.io import ensure_dir, read_jsonl, stable_hash, utc_now_iso, write_json, write_jsonl
 
 COT_LOCATION_KINDS = {"cot_start", "cot_1_3", "cot_2_3", "cot_end"}
@@ -29,9 +37,19 @@ def run_goal2_probes(config: Goal2ProbeConfig, show_progress: bool = False) -> P
     records = _valid_activation_records(config, examples)
     groups = _build_probe_groups(config, examples, records, show_progress=show_progress)
     metrics, predictions = _fit_probe_groups(config, groups, show_progress=show_progress)
+    (
+        slice_metrics,
+        shared_slice_metrics,
+        figure_metrics,
+        bootstrap_metrics,
+    ) = build_goal2_probe_analysis(predictions)
 
     write_jsonl(probe_dir / "probe_metrics.jsonl", metrics)
     write_jsonl(probe_dir / "probe_predictions.jsonl", predictions)
+    write_jsonl(probe_dir / GOAL2_SLICE_METRICS_FILENAME, slice_metrics)
+    write_jsonl(probe_dir / GOAL2_SHARED_SLICE_METRICS_FILENAME, shared_slice_metrics)
+    write_jsonl(probe_dir / GOAL2_FIGURE_METRICS_FILENAME, figure_metrics)
+    write_jsonl(probe_dir / GOAL2_BOOTSTRAP_METRICS_FILENAME, bootstrap_metrics)
     write_json(
         probe_dir / "manifest.json",
         {
@@ -44,6 +62,11 @@ def run_goal2_probes(config: Goal2ProbeConfig, show_progress: bool = False) -> P
             "probe_group_count": len(groups),
             "fitted_probe_count": sum(1 for row in metrics if row["status"] == "fitted"),
             "prediction_count": len(predictions),
+            "slice_metric_count": len(slice_metrics),
+            "shared_slice_metric_count": len(shared_slice_metrics),
+            "figure_metric_count": len(figure_metrics),
+            "bootstrap_metric_count": len(bootstrap_metrics),
+            "analysis_schema_version": GOAL2_PROBE_ANALYSIS_SCHEMA_VERSION,
             "artifact_kind": "goal2_linear_probes",
         },
     )
@@ -54,12 +77,22 @@ def _valid_activation_records(
     config: Goal2ProbeConfig,
     examples: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return activation records from train/test splits that did not hit the token limit."""
+    """Return uncapped activation records matching the configured probe data filters."""
     records = []
     allowed_splits = {config.train_split, config.test_split}
+    allowed_prompt_modes = (
+        {str(prompt_mode) for prompt_mode in config.prompt_modes}
+        if config.prompt_modes is not None
+        else None
+    )
     for record in read_jsonl(config.goal2_run_dir / "activations.jsonl"):
         example = examples.get(str(record.get("example_id")))
         if example is None or example.get("split") not in allowed_splits:
+            continue
+        if (
+            allowed_prompt_modes is not None
+            and example.get("prompt_mode") not in allowed_prompt_modes
+        ):
             continue
         if _hit_token_limit(record):
             continue
@@ -293,6 +326,7 @@ def _sample_metadata(
     metadata = location.get("metadata") or {}
     return {
         "example_id": record["example_id"],
+        "problem_id": example.get("problem_id", record["example_id"]),
         "model_name": record["model_name"],
         "split": example.get("split"),
         "prompt_mode": example.get("prompt_mode"),

@@ -6,7 +6,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from carry_trace.enums import AnswerFormat, DigitFormat, PromptMode, RunnerKind, SliceName
+from carry_trace.enums import (
+    ActivationLocation,
+    AnswerFormat,
+    DigitFormat,
+    ProbeTarget,
+    PromptMode,
+    RunnerKind,
+    SliceName,
+)
 
 
 class AdditionExample(BaseModel):
@@ -52,6 +60,91 @@ class AdditionExample(BaseModel):
     match_family: str | None = None
     match_constraints: dict[str, Any] = Field(default_factory=dict)
     partner_problem_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Goal3ReplayPrefix(BaseModel):
+    """Saved natural-CoT prefix recovered from a Goal 2 activation record."""
+
+    id: str
+    schema_version: str
+    source_goal2_run_id: str
+    example_id: str
+    problem_id: str
+    split: str
+    n_digits: int
+    source_model_name: str | None = None
+    source_model_id: str | None = None
+    location_kind: ActivationLocation
+    recorded_output_token_end_index: int | None = None
+    replay_output_token_end_index: int | None = None
+    prefix_token_source: str
+    prefix_alignment_delta: int | None = None
+    assistant_prefix_token_ids: list[int]
+    assistant_prefix: str
+    decoded_output: str
+    parsed_answer: str | None = None
+    expected_output: str
+    prompt: str
+    messages: list[dict[str, str]]
+    answer_only_example_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Goal3ReplayCase(BaseModel):
+    """Saved receiver assignment for one natural-CoT replay prefix."""
+
+    id: str
+    schema_version: str
+    replay_prefix_id: str
+    source_goal2_run_id: str
+    example_id: str
+    problem_id: str
+    split: str
+    n_digits: int
+    replay_kind: str
+    source_model_name: str | None = None
+    receiver_model_name: str
+    location_kind: ActivationLocation
+    assistant_prefix_token_ids: list[int]
+    assistant_prefix: str
+    expected_output: str
+    prompt: str
+    messages: list[dict[str, str]]
+    answer_only_example_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Goal3ResidualInterventionCase(BaseModel):
+    """Saved specification for one probe-guided residual intervention."""
+
+    id: str
+    schema_version: str
+    source_goal2_run_id: str
+    example_id: str
+    problem_id: str
+    split: str
+    n_digits: int
+    model_name: str
+    model_id: str
+    target: ProbeTarget
+    target_column_lsd: int
+    affected_output_column_lsd: int
+    factual_carry: int
+    counterfactual_carry: int
+    factual_output_digit: int
+    counterfactual_output_digit: int
+    factual_answer: str
+    counterfactual_answer: str
+    unchanged_output_columns_lsd: list[int]
+    location_kind: ActivationLocation
+    activation_location_name: str
+    activation_location_index: int
+    layer_index: int
+    activation_layer_index: int
+    activation_path: str
+    direction_id: str
+    direction_train_split: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

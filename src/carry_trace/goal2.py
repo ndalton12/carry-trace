@@ -189,6 +189,7 @@ def _extract_and_save_activations(
         "token_count_input": call.token_count_input,
         "token_count_output": call.token_count_output,
         "latency_seconds": call.latency_seconds,
+        "output_ids": call.output_ids,
         "decoded_output": call.decoded_output,
         "parsed_answer": call.parsed_answer,
         "call_metadata": call.metadata,

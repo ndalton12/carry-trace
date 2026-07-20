@@ -6,11 +6,16 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
 
-from carry_trace.io import ensure_dir, read_jsonl
+from carry_trace.goal2_probe_analysis import (
+    GOAL2_BOOTSTRAP_METRICS_FILENAME,
+    GOAL2_FIGURE_METRICS_FILENAME,
+)
+from carry_trace.io import ensure_dir, read_json, read_jsonl
 
 COMPARISON_ERRORBAR = ("ci", 95)
 COMPARISON_ERR_KWS = {"color": "#222222", "linewidth": 1.1}
@@ -57,6 +62,10 @@ GOAL2_STANDARD_DIGIT_FORMAT = "standard"
 GOAL2_STANDARD_ANSWER_FORMAT = "standard"
 GOAL2_DELIMITED_DIGIT_FORMAT = "delimited"
 GOAL2_LSD_ANSWER_FORMAT = "lsd"
+GOAL35_MODEL_LABELS = {
+    "olmo3-instruct-sft": "SFT",
+    "olmo3-instruct-full": "Full",
+}
 GOAL2_FIGURE_FORMAT_SPECS = [
     ("standard", GOAL2_STANDARD_DIGIT_FORMAT, GOAL2_STANDARD_ANSWER_FORMAT),
     ("delimited_digit_format", GOAL2_DELIMITED_DIGIT_FORMAT, GOAL2_STANDARD_ANSWER_FORMAT),
@@ -82,6 +91,7 @@ ERROR_LOCATION_COLORS = {
     "After First Carry": "#0072B2",
 }
 DISPLAY_LABELS = {
+    "SFT": "SFT",
     "any_carry": "Any Carry",
     "incoming_carry": "Incoming Carry",
     "outgoing_carry": "Outgoing Carry",
@@ -186,12 +196,1100 @@ def make_goal2_probe_figures(
     metrics = metrics[metrics["status"] == "fitted"].copy() if not metrics.empty else metrics
     if metrics.empty:
         return []
+    figure_metrics_path = probe_dir / GOAL2_FIGURE_METRICS_FILENAME
+    if figure_metrics_path.exists():
+        figure_metrics = pd.DataFrame(read_jsonl(figure_metrics_path))
+        bootstrap_metrics_path = probe_dir / GOAL2_BOOTSTRAP_METRICS_FILENAME
+        bootstrap_metrics = (
+            pd.DataFrame(read_jsonl(bootstrap_metrics_path))
+            if bootstrap_metrics_path.exists()
+            else pd.DataFrame()
+        )
+        return _make_goal2_precomputed_figure_sets(
+            figure_metrics,
+            bootstrap_metrics,
+            output_dir,
+        )
     predictions = (
         pd.DataFrame(read_jsonl(predictions_path)) if predictions_path.exists() else pd.DataFrame()
     )
+    predictions = _goal2_add_problem_ids(probe_dir, predictions)
     if _has_goal2_format_metadata(predictions) or _has_goal2_format_metadata(metrics):
         return _make_goal2_probe_figure_sets(metrics, predictions, output_dir)
     return _make_goal2_probe_figure_set(metrics, predictions, ensure_dir(output_dir / "standard"))
+
+
+def make_goal35_figures(
+    run_dir: Path,
+    output_dir: Path | None = None,
+) -> list[Path]:
+    """Generate Goal 3.5 replay figures and plain-text result tables."""
+    _set_paper_style()
+    output_dir = ensure_dir(output_dir or run_dir / "figures")
+    artifacts = _goal35_artifacts(run_dir)
+    paths = [
+        _goal35_crossed_replay_figure(artifacts, output_dir),
+        _goal35_incorrect_cot_figure(artifacts, output_dir),
+        _goal35_completion_coverage_figure(artifacts, output_dir),
+        _goal35_crossed_replay_table(artifacts, output_dir),
+        _goal35_incorrect_cot_table(artifacts, output_dir),
+        _goal35_completion_coverage_table(artifacts, output_dir),
+    ]
+    return paths
+
+
+def _goal35_artifacts(run_dir: Path) -> dict[str, object]:
+    """Load the saved artifacts required by Goal 3.5 presentation outputs."""
+    manifest = read_json(run_dir / "manifest.json")
+    filenames = {
+        "audits": "completion_audits.jsonl",
+        "coverage": "completion_coverage.jsonl",
+        "generations": "replay_generations.jsonl",
+        "historical_status": "historical_import_status.jsonl",
+        "metrics": "replay_primary_metrics.jsonl",
+        "scores": "replay_scores.jsonl",
+    }
+    artifacts: dict[str, object] = {"manifest": manifest}
+    for key, filename in filenames.items():
+        path = run_dir / filename
+        if not path.exists():
+            raise ValueError(f"Goal 3.5 figure input is missing: {path}")
+        artifacts[key] = pd.DataFrame(read_jsonl(path))
+    return artifacts
+
+
+def _goal35_crossed_replay_figure(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Plot the native source-by-receiver interaction at the natural CoT endpoint."""
+    model_names = _goal35_model_names(artifacts)
+    problems = _goal35_native_shared_problems(artifacts, model_names)
+    generations = artifacts["generations"]
+    scores = artifacts["scores"]
+    assert isinstance(generations, pd.DataFrame)
+    assert isinstance(scores, pd.DataFrame)
+    generation_rows = generations[
+        generations["problem_id"].isin(problems)
+        & generations["source_model_name"].isin(model_names)
+        & (generations["location_kind"] == "cot_end")
+    ].copy()
+    score_rows = scores[
+        scores["problem_id"].isin(problems)
+        & scores["source_model_name"].isin(model_names)
+        & (scores["location_kind"] == "cot_end")
+    ].copy()
+    seed, bootstrap_samples, confidence_level = _goal35_analysis_settings(artifacts)
+    rng = np.random.default_rng(seed)
+    panels = [
+        (generation_rows, "exact_match", "Answer Accuracy", True),
+        (score_rows, "expected_answer_logprob", "Correct-Answer Log Probability", False),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
+    colors = dict(zip(model_names, MODEL_PALETTE, strict=False))
+    markers = ["o", "s"]
+    for ax, (rows, value_column, ylabel, accuracy_panel) in zip(axes, panels, strict=True):
+        for marker, receiver in zip(markers, model_names, strict=True):
+            means = []
+            lowers = []
+            uppers = []
+            for source in model_names:
+                values = rows[
+                    (rows["receiver_model_name"] == receiver)
+                    & (rows["source_model_name"] == source)
+                ][value_column].astype(float)
+                mean, lower, upper = _goal35_bootstrap_mean(
+                    values.to_numpy(),
+                    rng,
+                    bootstrap_samples,
+                    confidence_level,
+                )
+                means.append(mean)
+                lowers.append(mean - lower)
+                uppers.append(upper - mean)
+            ax.errorbar(
+                range(len(model_names)),
+                means,
+                yerr=[lowers, uppers],
+                color=colors[receiver],
+                marker=marker,
+                markersize=5,
+                linewidth=1.7,
+                capsize=3,
+                label=_goal35_model_label(receiver),
+            )
+        interaction = _goal35_interaction_metric(artifacts, value_column)
+        ax.text(
+            0.03,
+            0.04,
+            _goal35_interaction_annotation(interaction, accuracy_panel),
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8,
+        )
+        ax.set_xticks(range(len(model_names)))
+        ax.set_xticklabels([f"{_goal35_model_label(model)} CoT" for model in model_names])
+        ax.set_xlabel("Reasoning Source")
+        ax.set_ylabel(ylabel)
+        ax.set_title(ylabel)
+        ax.grid(axis="x", visible=False)
+        if accuracy_panel:
+            ax.set_ylim(0, 1)
+        sns.despine(fig=fig, ax=ax)
+    axes[1].legend(title="Receiver", loc="upper right")
+    _format_legend(axes[1])
+    return _save_figure(fig, output_dir / "goal35_crossed_replay_cot_end.png")
+
+
+def _goal35_incorrect_cot_figure(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Plot correction and copying outcomes after replaying incorrect CoTs."""
+    outcomes = _goal35_incorrect_outcomes(artifacts)
+    categories = ["Copied Source Error", "Corrected", "Other Wrong"]
+    colors = [MODEL_PALETTE[3], MODEL_PALETTE[2], "#999999"]
+    hatches = ["///", "", "..."]
+    fig, ax = plt.subplots(figsize=(7.6, 4.0))
+    positions = np.arange(len(outcomes))
+    bottoms = np.zeros(len(outcomes))
+    for category, color, hatch in zip(categories, colors, hatches, strict=True):
+        values = outcomes[category].to_numpy(dtype=float)
+        bars = ax.bar(
+            positions,
+            values,
+            bottom=bottoms,
+            color=color,
+            edgecolor="white",
+            linewidth=0.6,
+            hatch=hatch,
+            label=category,
+        )
+        for bar, value, bottom in zip(bars, values, bottoms, strict=True):
+            if value >= 0.08:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bottom + value / 2,
+                    f"{value:.0%}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                )
+        bottoms += values
+    labels = [
+        f"{_goal35_model_label(source)} CoT\n{_goal35_model_label(receiver)} receiver"
+        for source, receiver in zip(
+            outcomes["source_model_name"],
+            outcomes["receiver_model_name"],
+            strict=True,
+        )
+    ]
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.set_ylim(0, 1.08)
+    ax.set_xlabel("")
+    ax.set_ylabel("Share of Incorrect Source CoTs")
+    ax.grid(axis="x", visible=False)
+    for position, n in zip(positions, outcomes["n"], strict=True):
+        ax.text(position, 1.02, f"n={int(n)}", ha="center", va="bottom", fontsize=8)
+    ax.legend(title="Replay Outcome", ncols=3, loc="upper center", bbox_to_anchor=(0.5, 1.22))
+    _format_legend(ax)
+    sns.despine(fig=fig, ax=ax)
+    return _save_figure(fig, output_dir / "goal35_incorrect_cot_outcomes.png")
+
+
+def _goal35_completion_coverage_figure(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Plot native completion attrition by model and digit length."""
+    coverage = artifacts["coverage"]
+    assert isinstance(coverage, pd.DataFrame)
+    rows = coverage[coverage["n_digits"].notna()].copy()
+    model_order = {model: index for index, model in enumerate(_goal35_model_names(artifacts))}
+    rows["_model_order"] = rows["model_name"].map(model_order)
+    rows = rows.sort_values(["n_digits", "_model_order"])
+    rows["group"] = rows.apply(
+        lambda row: f"{int(row['n_digits'])}-digit\n{_goal35_model_label(row['model_name'])}",
+        axis=1,
+    )
+    fields = [
+        ("requested", "Requested", "#999999"),
+        ("eligible_for_shared_replay", "Usable Completion", MODEL_PALETTE[0]),
+        ("selected_for_shared_replay", "Shared Replay Set", MODEL_PALETTE[1]),
+    ]
+    positions = np.arange(len(rows))
+    width = 0.24
+    fig, ax = plt.subplots(figsize=(7.2, 3.8))
+    for offset, (field, label, color) in zip([-width, 0, width], fields, strict=True):
+        values = rows[field].astype(float) / rows["requested"].astype(float)
+        bars = ax.bar(positions + offset, values, width=width, color=color, label=label)
+        for bar, count in zip(bars, rows[field], strict=True):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.015,
+                str(int(count)),
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+    ax.set_xticks(positions)
+    ax.set_xticklabels(rows["group"])
+    ax.set_ylim(0, 1.1)
+    ax.set_xlabel("")
+    ax.set_ylabel("Share of Requested Problems")
+    ax.grid(axis="x", visible=False)
+    ax.legend(title="Completion Stage", ncols=3, loc="upper center", bbox_to_anchor=(0.5, 1.2))
+    _format_legend(ax)
+    sns.despine(fig=fig, ax=ax)
+    return _save_figure(fig, output_dir / "goal35_completion_coverage.png")
+
+
+def _goal35_model_names(artifacts: dict[str, object]) -> list[str]:
+    """Return Goal 3.5 model names in configured comparison order."""
+    manifest = artifacts["manifest"]
+    assert isinstance(manifest, dict)
+    return [str(model["name"]) for model in manifest["config"]["models"]]
+
+
+def _goal35_model_label(model_name: object) -> str:
+    """Return a compact checkpoint label for Goal 3.5 outputs."""
+    return GOAL35_MODEL_LABELS.get(str(model_name), _display_label(model_name))
+
+
+def _goal35_native_shared_problems(
+    artifacts: dict[str, object],
+    model_names: list[str],
+) -> set[str]:
+    """Return native problems with replayed CoTs from both source models."""
+    audits = artifacts["audits"]
+    assert isinstance(audits, pd.DataFrame)
+    native = audits[
+        audits["source_model_name"].isin(model_names)
+        & (audits["source_cohort"].fillna("goal35_native") == "goal35_native")
+    ]
+    counts = native.groupby("problem_id")["source_model_name"].nunique()
+    return set(counts[counts == len(model_names)].index.astype(str))
+
+
+def _goal35_analysis_settings(artifacts: dict[str, object]) -> tuple[int, int, float]:
+    """Return the configured bootstrap seed, sample count, and confidence level."""
+    manifest = artifacts["manifest"]
+    assert isinstance(manifest, dict)
+    config = manifest["config"]
+    analysis = config["analysis"]
+    return (
+        int(config["seed"]),
+        int(analysis["bootstrap_samples"]),
+        float(analysis["confidence_level"]),
+    )
+
+
+def _goal35_bootstrap_mean(
+    values: np.ndarray,
+    rng: np.random.Generator,
+    bootstrap_samples: int,
+    confidence_level: float,
+) -> tuple[float, float, float]:
+    """Return a mean and problem-bootstrap confidence interval."""
+    if len(values) == 0:
+        raise ValueError("Goal 3.5 figure group has no observations")
+    indices = rng.integers(0, len(values), size=(bootstrap_samples, len(values)))
+    means = values[indices].mean(axis=1)
+    alpha = 1.0 - confidence_level
+    lower, upper = np.quantile(means, [alpha / 2.0, 1.0 - alpha / 2.0])
+    return float(values.mean()), float(lower), float(upper)
+
+
+def _goal35_interaction_metric(
+    artifacts: dict[str, object],
+    value_column: str,
+) -> pd.Series:
+    """Return the all-shared endpoint interaction metric for one outcome."""
+    metrics = artifacts["metrics"]
+    assert isinstance(metrics, pd.DataFrame)
+    rows = metrics[
+        (metrics["analysis"] == "receiver_by_source_interaction")
+        & (metrics["subset"] == "all_shared")
+        & metrics["n_digits"].isna()
+        & (metrics["location_kind"] == "cot_end")
+    ]
+    if len(rows) != 1:
+        raise ValueError("Goal 3.5 endpoint interaction metric is missing or duplicated")
+    row = rows.iloc[0]
+    required = (
+        "mean_generation_accuracy_interaction"
+        if value_column == "exact_match"
+        else "mean_logprob_interaction"
+    )
+    if pd.isna(row[required]):
+        raise ValueError(f"Goal 3.5 endpoint interaction has no {required}")
+    return row
+
+
+def _goal35_interaction_annotation(metric: pd.Series, accuracy: bool) -> str:
+    """Format one receiver-by-source interaction annotation."""
+    if accuracy:
+        n = int(metric["generation_accuracy_interaction_n"])
+        mean = 100 * float(metric["mean_generation_accuracy_interaction"])
+        lower = 100 * float(metric["generation_accuracy_interaction_ci_lower"])
+        upper = 100 * float(metric["generation_accuracy_interaction_ci_upper"])
+        return f"Interaction (n={n}): {mean:+.1f} pp\n95% CI [{lower:+.1f}, {upper:+.1f}]"
+    n = int(metric["logprob_interaction_n"])
+    mean = float(metric["mean_logprob_interaction"])
+    lower = float(metric["logprob_interaction_ci_lower"])
+    upper = float(metric["logprob_interaction_ci_upper"])
+    return f"Interaction (n={n}): {mean:+.2f}\n95% CI [{lower:+.2f}, {upper:+.2f}]"
+
+
+def _goal35_incorrect_replay_rows(artifacts: dict[str, object]) -> pd.DataFrame:
+    """Classify replay outcomes for every clean incorrect source CoT."""
+    audits = artifacts["audits"]
+    generations = artifacts["generations"]
+    assert isinstance(audits, pd.DataFrame)
+    assert isinstance(generations, pd.DataFrame)
+    incorrect = audits[
+        audits["source_model_name"].notna()
+        & ~audits["source_answer_correct"].astype(bool)
+        & audits["clean_terminal_answer"].astype(bool)
+    ][["problem_id", "source_model_name", "parsed_answer"]].rename(
+        columns={"parsed_answer": "source_parsed_answer"}
+    )
+    rows = generations[
+        generations["source_model_name"].notna() & (generations["location_kind"] == "cot_end")
+    ].merge(
+        incorrect,
+        on=["problem_id", "source_model_name"],
+        how="inner",
+        validate="many_to_one",
+    )
+    rows["corrected"] = rows["exact_match"].astype(bool)
+    rows["copied_source_error"] = (
+        rows["parsed_answer"].astype("string") == rows["source_parsed_answer"].astype("string")
+    ).fillna(False)
+    rows["other_wrong"] = ~rows["corrected"] & ~rows["copied_source_error"]
+    return rows
+
+
+def _goal35_incorrect_outcomes(artifacts: dict[str, object]) -> pd.DataFrame:
+    """Aggregate correction, copying, and other-error shares by source and receiver."""
+    rows = _goal35_incorrect_replay_rows(artifacts)
+    model_names = _goal35_model_names(artifacts)
+    grouped = (
+        rows.groupby(["source_model_name", "receiver_model_name"], as_index=False)
+        .agg(
+            n=("problem_id", "size"),
+            **{
+                "Copied Source Error": ("copied_source_error", "mean"),
+                "Corrected": ("corrected", "mean"),
+                "Other Wrong": ("other_wrong", "mean"),
+            },
+        )
+        .set_index(["source_model_name", "receiver_model_name"])
+        .reindex(
+            pd.MultiIndex.from_product(
+                [model_names, model_names],
+                names=["source_model_name", "receiver_model_name"],
+            )
+        )
+        .reset_index()
+    )
+    if grouped["n"].isna().any():
+        raise ValueError("Goal 3.5 incorrect-CoT outcome grid is incomplete")
+    return grouped
+
+
+def _goal35_crossed_replay_table(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Write endpoint receiver-by-source interactions as a plain-text table."""
+    metrics = artifacts["metrics"]
+    assert isinstance(metrics, pd.DataFrame)
+    rows = metrics[
+        (metrics["analysis"] == "receiver_by_source_interaction")
+        & metrics["n_digits"].isna()
+        & (metrics["location_kind"] == "cot_end")
+    ].copy()
+    subset_order = ["all_shared", "both_source_correct", "both_source_correct_clean"]
+    rows["_order"] = rows["subset"].map({value: index for index, value in enumerate(subset_order)})
+    rows = rows.sort_values("_order")
+    table = pd.DataFrame(
+        {
+            "Analysis set": rows["subset"].map(_display_label),
+            "n": rows["logprob_interaction_n"].astype(int),
+            "Accuracy interaction (95% CI)": rows.apply(
+                lambda row: _goal35_format_estimate(
+                    row["mean_generation_accuracy_interaction"],
+                    row["generation_accuracy_interaction_ci_lower"],
+                    row["generation_accuracy_interaction_ci_upper"],
+                    percentage_points=True,
+                ),
+                axis=1,
+            ),
+            "Logprob interaction (95% CI)": rows.apply(
+                lambda row: _goal35_format_estimate(
+                    row["mean_logprob_interaction"],
+                    row["logprob_interaction_ci_lower"],
+                    row["logprob_interaction_ci_upper"],
+                ),
+                axis=1,
+            ),
+        }
+    )
+    text = (
+        "Goal 3.5 crossed replay at cot_end\n"
+        "Interaction = (Full-source - SFT-source) in Full receiver minus SFT receiver.\n\n"
+        f"{table.to_string(index=False)}\n"
+    )
+    return _write_text_output(output_dir / "goal35_crossed_replay_table.txt", text)
+
+
+def _goal35_incorrect_cot_table(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Write incorrect-CoT replay outcomes and paired receiver contrasts."""
+    metrics = artifacts["metrics"]
+    assert isinstance(metrics, pd.DataFrame)
+    model_names = _goal35_model_names(artifacts)
+    rows = metrics[
+        (metrics["analysis"] == "incorrect_source_entrainment")
+        & (metrics["source_cohort"] == "all")
+        & metrics["source_run_id"].isna()
+        & metrics["n_digits"].isna()
+    ].copy()
+    order = {model: index for index, model in enumerate(model_names)}
+    rows["_source_order"] = rows["source_model_name"].map(order)
+    rows["_receiver_order"] = rows["receiver_model_name"].map(order)
+    rows = rows.sort_values(["_source_order", "_receiver_order"])
+    table = pd.DataFrame(
+        {
+            "Source CoT": rows["source_model_name"].map(_goal35_model_label),
+            "Receiver": rows["receiver_model_name"].map(_goal35_model_label),
+            "n": rows["n"].astype(int),
+            "Direct acc.": rows["direct_generation_accuracy"].map(lambda value: f"{value:.1%}"),
+            "Replay acc.": rows["replay_generation_accuracy"].map(lambda value: f"{value:.1%}"),
+            "Accuracy change (95% CI)": rows.apply(
+                lambda row: _goal35_format_estimate(
+                    row["mean_generation_accuracy_delta"],
+                    row["generation_accuracy_delta_ci_lower"],
+                    row["generation_accuracy_delta_ci_upper"],
+                    percentage_points=True,
+                ),
+                axis=1,
+            ),
+            "Copied source error": rows["same_source_answer_rate"].map(
+                lambda value: f"{value:.1%}"
+            ),
+        }
+    )
+    contrasts = _goal35_receiver_contrast_table(artifacts)
+    history = _goal35_historical_composition_table(artifacts)
+    text = (
+        "Goal 3.5 replay of clean incorrect natural CoTs\n"
+        "All = native Goal 3.5 plus historical random/standard donors.\n\n"
+        f"{table.to_string(index=False)}\n\n"
+        "Paired Full-receiver minus SFT-receiver contrasts\n\n"
+        f"{contrasts.to_string(index=False)}\n\n"
+        "Historical donor composition\n\n"
+        f"{history.to_string(index=False)}\n"
+    )
+    return _write_text_output(output_dir / "goal35_incorrect_cot_table.txt", text)
+
+
+def _goal35_receiver_contrast_table(artifacts: dict[str, object]) -> pd.DataFrame:
+    """Return paired receiver differences for the same incorrect source CoTs."""
+    rows = _goal35_incorrect_replay_rows(artifacts)
+    model_names = _goal35_model_names(artifacts)
+    baseline_receiver, comparison_receiver = model_names
+    seed, bootstrap_samples, confidence_level = _goal35_analysis_settings(artifacts)
+    rng = np.random.default_rng(seed + 1)
+    output = []
+    for source in model_names:
+        source_rows = rows[rows["source_model_name"] == source]
+        for value_column, outcome_label in [
+            ("corrected", "Replay accuracy"),
+            ("copied_source_error", "Copied source error"),
+        ]:
+            pivot = source_rows.pivot(
+                index="problem_id",
+                columns="receiver_model_name",
+                values=value_column,
+            ).dropna(subset=model_names)
+            differences = (
+                pivot[comparison_receiver].astype(float) - pivot[baseline_receiver].astype(float)
+            ).to_numpy()
+            mean, lower, upper = _goal35_bootstrap_mean(
+                differences,
+                rng,
+                bootstrap_samples,
+                confidence_level,
+            )
+            output.append(
+                {
+                    "Source CoT": _goal35_model_label(source),
+                    "Outcome": outcome_label,
+                    "n": len(differences),
+                    "Full - SFT (95% CI)": _goal35_format_estimate(
+                        mean,
+                        lower,
+                        upper,
+                        percentage_points=True,
+                    ),
+                }
+            )
+    return pd.DataFrame(output)
+
+
+def _goal35_historical_composition_table(artifacts: dict[str, object]) -> pd.DataFrame:
+    """Return selected historical donor counts by source run and model."""
+    statuses = artifacts["historical_status"]
+    assert isinstance(statuses, pd.DataFrame)
+    selected = statuses[statuses["status"] == "selected"]
+    table = selected.pivot_table(
+        index="source_run_id",
+        columns="model_name",
+        values="problem_id",
+        aggfunc="size",
+        fill_value=0,
+    )
+    model_names = _goal35_model_names(artifacts)
+    for model in model_names:
+        if model not in table:
+            table[model] = 0
+    table = table[model_names].rename(columns=_goal35_model_label)
+    table["Total"] = table.sum(axis=1)
+    return table.reset_index().rename(columns={"source_run_id": "Source run"})
+
+
+def _goal35_completion_coverage_table(
+    artifacts: dict[str, object],
+    output_dir: Path,
+) -> Path:
+    """Write native source-completion attrition as a plain-text table."""
+    coverage = artifacts["coverage"]
+    assert isinstance(coverage, pd.DataFrame)
+    rows = coverage[coverage["n_digits"].notna()].copy()
+    rows["n_digits"] = rows["n_digits"].astype(int)
+    rows["Model"] = rows["model_name"].map(_goal35_model_label)
+    model_order = {model: index for index, model in enumerate(_goal35_model_names(artifacts))}
+    rows["_model_order"] = rows["model_name"].map(model_order)
+    rows = rows.sort_values(["n_digits", "_model_order"])
+    table = pd.DataFrame(
+        {
+            "Digits": rows["n_digits"],
+            "Model": rows["Model"],
+            "Requested": rows["requested"].astype(int),
+            "Token-limit hits": rows["token_limit_hits"].astype(int),
+            "Usable": rows["eligible_for_shared_replay"].astype(int),
+            "Shared": rows["selected_for_shared_replay"].astype(int),
+            "Selected source acc.": rows["selected_source_accuracy"].map(
+                lambda value: f"{value:.1%}"
+            ),
+            "Selected clean": rows["selected_clean_rate"].map(lambda value: f"{value:.1%}"),
+        }
+    )
+    text = (
+        "Goal 3.5 native source-completion coverage\n"
+        "Usable = non-truncated completion with all requested CoT boundaries.\n"
+        "Shared = problem usable for both source models.\n\n"
+        f"{table.to_string(index=False)}\n"
+    )
+    return _write_text_output(output_dir / "goal35_completion_coverage_table.txt", text)
+
+
+def _goal35_format_estimate(
+    mean: float,
+    lower: float,
+    upper: float,
+    percentage_points: bool = False,
+) -> str:
+    """Format an estimate and confidence interval for a text table."""
+    if percentage_points:
+        return f"{100 * mean:+.1f} pp [{100 * lower:+.1f}, {100 * upper:+.1f}]"
+    return f"{mean:+.2f} [{lower:+.2f}, {upper:+.2f}]"
+
+
+def _write_text_output(path: Path, content: str) -> Path:
+    """Write one plain-text table artifact."""
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _goal2_add_problem_ids(probe_dir: Path, predictions: pd.DataFrame) -> pd.DataFrame:
+    """Add problem IDs to legacy prediction artifacts when the source dataset is available."""
+    if predictions.empty or "example_id" not in predictions:
+        return predictions
+    enriched = predictions
+    if "problem_id" not in enriched:
+        enriched["problem_id"] = pd.NA
+    manifest_path = probe_dir / "manifest.json"
+    if enriched["problem_id"].isna().any() and manifest_path.exists():
+        manifest = read_json(manifest_path)
+        goal2_run_dir = Path(str(manifest.get("goal2_run_dir", "")))
+        dataset_path = goal2_run_dir / "dataset.jsonl"
+        if dataset_path.exists():
+            problem_ids = {
+                str(row["id"]): str(row.get("problem_id", row["id"]))
+                for row in read_jsonl(dataset_path)
+            }
+            enriched["problem_id"] = enriched["problem_id"].fillna(
+                enriched["example_id"].astype(str).map(problem_ids)
+            )
+    enriched["problem_id"] = enriched["problem_id"].fillna(enriched["example_id"])
+    return enriched
+
+
+def _make_goal2_precomputed_figure_sets(
+    figure_metrics: pd.DataFrame,
+    bootstrap_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render Goal 2 figures exclusively from probe-stage analysis tables."""
+    paths = []
+    for dirname, digit_format, answer_format in GOAL2_FIGURE_FORMAT_SPECS:
+        format_metrics = _filter_goal2_formats(figure_metrics, digit_format, answer_format)
+        if format_metrics.empty:
+            continue
+        format_bootstrap_metrics = _filter_goal2_formats(
+            bootstrap_metrics,
+            digit_format,
+            answer_format,
+        )
+        paths.extend(
+            _render_goal2_precomputed_figure_set(
+                figure_metrics=format_metrics,
+                bootstrap_metrics=format_bootstrap_metrics,
+                output_dir=ensure_dir(output_dir / dirname),
+            )
+        )
+    return paths
+
+
+def _render_goal2_precomputed_figure_set(
+    figure_metrics: pd.DataFrame,
+    bootstrap_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render figures without recomputing any probe statistics."""
+    summary_dir = ensure_dir(output_dir / "summary")
+    diagnostics_dir = ensure_dir(output_dir / "diagnostics")
+    paths = [
+        *_goal2_precomputed_summary_matrices(figure_metrics, summary_dir),
+        *_goal2_precomputed_summary_delta_matrices(figure_metrics, summary_dir),
+        _goal2_precomputed_reasoning_time(figure_metrics, summary_dir),
+        _goal2_precomputed_reasoning_time_delta(figure_metrics, summary_dir),
+        _goal2_precomputed_layer_profile(figure_metrics, summary_dir),
+        *_goal2_precomputed_heatmaps(figure_metrics, diagnostics_dir),
+        *_goal2_precomputed_delta_heatmaps(figure_metrics, diagnostics_dir),
+        *_goal2_precomputed_timing_curves(figure_metrics, diagnostics_dir),
+    ]
+    if not bootstrap_metrics.empty:
+        inference_dir = ensure_dir(output_dir / "inference")
+        paths.extend(_goal2_paired_bootstrap_plots(bootstrap_metrics, inference_dir))
+    return [path for path in paths if path is not None]
+
+
+def _goal2_precomputed_summary_matrices(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render target summaries from precomputed best-layer values."""
+    rows = figure_metrics[figure_metrics["figure_data_kind"] == "summary_model"].copy()
+    if rows.empty:
+        return []
+    paths = []
+    group_columns = ["model_name", "prompt_mode"]
+    for (model_name, prompt_mode), subset in rows.groupby(
+        group_columns,
+        dropna=False,
+        sort=True,
+    ):
+        table = _goal2_precomputed_summary_table(subset, "test_accuracy")
+        if table.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(7.4, 4.4))
+        sns.heatmap(
+            table,
+            annot=False,
+            vmin=0,
+            vmax=1,
+            cmap=HEATMAP_CMAP,
+            linewidths=0.4,
+            linecolor="white",
+            cbar_kws={"label": "Probe Accuracy"},
+            ax=ax,
+        )
+        ax.set_xlabel("Token Location")
+        ax.set_ylabel("Probe Target")
+        ax.tick_params(axis="x", rotation=25)
+        suffix = "" if pd.isna(prompt_mode) else f"_{_filename_slug(str(prompt_mode))}"
+        filename = f"goal2_target_summary_matrix_{_filename_slug(str(model_name))}{suffix}.png"
+        paths.append(_save_figure(fig, output_dir / filename))
+    return paths
+
+
+def _goal2_precomputed_summary_delta_matrices(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render target-summary deltas from precomputed paired-model values."""
+    rows = figure_metrics[figure_metrics["figure_data_kind"] == "summary_delta"].copy()
+    if rows.empty:
+        return []
+    paths = []
+    for prompt_mode, subset in rows.groupby("prompt_mode", dropna=False, sort=True):
+        table = _goal2_precomputed_summary_table(subset, "delta_accuracy")
+        if table.empty:
+            continue
+        vmin, vmax = _symmetric_heatmap_bounds(table)
+        fig, ax = plt.subplots(figsize=(7.4, 4.4))
+        sns.heatmap(
+            table,
+            annot=False,
+            center=0,
+            vmin=vmin,
+            vmax=vmax,
+            cmap="vlag",
+            linewidths=0.4,
+            linecolor="white",
+            cbar_kws={"label": "Delta Probe Accuracy"},
+            ax=ax,
+        )
+        ax.set_xlabel("Token Location")
+        ax.set_ylabel("Probe Target")
+        ax.tick_params(axis="x", rotation=25)
+        pair = (subset.iloc[0]["minuend_model"], subset.iloc[0]["subtrahend_model"])
+        suffix = "" if pd.isna(prompt_mode) else f"_{_filename_slug(str(prompt_mode))}"
+        filename = f"goal2_target_summary_delta_{_goal2_delta_slug(pair)}{suffix}.png"
+        paths.append(_save_figure(fig, output_dir / filename))
+    return paths
+
+
+def _goal2_precomputed_summary_table(subset: pd.DataFrame, value_column: str) -> pd.DataFrame:
+    """Pivot one precomputed target-by-location table without aggregation."""
+    if subset.empty:
+        return pd.DataFrame()
+    table = subset.pivot(
+        index="target",
+        columns="location_kind",
+        values=value_column,
+    )
+    target_order = sorted(table.index, key=_target_sort_key)
+    location_order = sorted(table.columns, key=_location_sort_key)
+    table = table.reindex(index=target_order, columns=location_order)
+    table.index = [_display_label(value) for value in table.index]
+    table.columns = [_display_label(value) for value in table.columns]
+    return table
+
+
+def _goal2_precomputed_reasoning_time(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> Path | None:
+    """Render pooled carry-chain timing from precomputed summary values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "summary_model")
+        & figure_metrics["prompt_mode"].isna()
+        & (figure_metrics["target"] == "carry_chain_membership")
+        & figure_metrics["location_kind"].isin(GOAL2_TIMING_LOCATION_ORDER)
+    ].copy()
+    if rows.empty:
+        return None
+    return _goal2_precomputed_line_plot(
+        rows,
+        value_column="test_accuracy",
+        output_path=output_dir / "goal2_reasoning_time_by_column.png",
+        ylabel="Best-Layer Probe Accuracy",
+        hue_column="model_name",
+        ylim=(0, 1),
+    )
+
+
+def _goal2_precomputed_reasoning_time_delta(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> Path | None:
+    """Render pooled carry-chain deltas from precomputed summary values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "summary_delta")
+        & figure_metrics["prompt_mode"].isna()
+        & (figure_metrics["target"] == "carry_chain_membership")
+        & figure_metrics["location_kind"].isin(GOAL2_TIMING_LOCATION_ORDER)
+    ].copy()
+    if rows.empty:
+        return None
+    pair = (rows.iloc[0]["minuend_model"], rows.iloc[0]["subtrahend_model"])
+    return _goal2_precomputed_line_plot(
+        rows,
+        value_column="delta_accuracy",
+        output_path=output_dir
+        / f"goal2_reasoning_time_by_column_delta_{_goal2_delta_slug(pair)}.png",
+        ylabel="Delta Best-Layer Probe Accuracy",
+        add_zero_line=True,
+    )
+
+
+def _goal2_precomputed_line_plot(
+    rows: pd.DataFrame,
+    value_column: str,
+    output_path: Path,
+    ylabel: str,
+    hue_column: str | None = None,
+    ylim: tuple[float, float] | None = None,
+    add_zero_line: bool = False,
+) -> Path:
+    """Render a location line plot from one-value-per-point rows."""
+    rows = rows.copy()
+    rows["location_order"] = rows["location_kind"].map(_location_sort_key)
+    rows = rows.sort_values("location_order")
+    fig, ax = plt.subplots(figsize=COMPARISON_FIGSIZE)
+    groups = rows.groupby(hue_column, sort=True) if hue_column else [(None, rows)]
+    palette = _model_palette(rows) if hue_column == "model_name" else {}
+    for group_name, group in groups:
+        color = palette.get(group_name, MODEL_PALETTE[0])
+        ax.plot(
+            [_display_label(value) for value in group["location_kind"]],
+            group[value_column],
+            color=color,
+            marker="o",
+            linewidth=1.5,
+            label=_display_label(group_name) if group_name is not None else None,
+        )
+    if add_zero_line:
+        ax.axhline(0, color="#555555", linewidth=0.7, linestyle=":")
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.set_xlabel("Reasoning Location")
+    ax.set_ylabel(ylabel)
+    ax.tick_params(axis="x", rotation=25)
+    if hue_column:
+        ax.legend(title=_display_label(hue_column))
+        _format_legend(ax)
+    sns.despine(fig=fig, ax=ax)
+    return _save_figure(fig, output_path)
+
+
+def _goal2_precomputed_heatmaps(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render layer heatmaps from precomputed column-averaged values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "layer_model") & figure_metrics["prompt_mode"].isna()
+    ].copy()
+    paths = []
+    for (model_name, target), subset in rows.groupby(["model_name", "target"], sort=True):
+        table = _goal2_precomputed_layer_table(subset, "test_accuracy")
+        if table.empty:
+            continue
+        fig, ax = plt.subplots(figsize=HEATMAP_FIGSIZE)
+        sns.heatmap(
+            table,
+            annot=False,
+            vmin=0,
+            vmax=1,
+            cmap=HEATMAP_CMAP,
+            linewidths=0.4,
+            linecolor="white",
+            cbar_kws={"label": "Probe Accuracy"},
+            ax=ax,
+        )
+        ax.set_xlabel("Token Location")
+        ax.set_ylabel("Layer")
+        ax.tick_params(axis="x", rotation=25)
+        filename = (
+            f"linear_probe_heatmap_{_filename_slug(str(model_name))}_"
+            f"{_filename_slug(str(target))}.png"
+        )
+        paths.append(_save_figure(fig, output_dir / filename))
+    return paths
+
+
+def _goal2_precomputed_delta_heatmaps(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render layer delta heatmaps from precomputed paired-model values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "layer_delta") & figure_metrics["prompt_mode"].isna()
+    ].copy()
+    paths = []
+    for target, subset in rows.groupby("target", sort=True):
+        table = _goal2_precomputed_layer_table(subset, "delta_accuracy")
+        if table.empty:
+            continue
+        vmin, vmax = _symmetric_heatmap_bounds(table)
+        fig, ax = plt.subplots(figsize=HEATMAP_FIGSIZE)
+        sns.heatmap(
+            table,
+            annot=False,
+            center=0,
+            vmin=vmin,
+            vmax=vmax,
+            cmap="vlag",
+            linewidths=0.4,
+            linecolor="white",
+            cbar_kws={"label": "Delta Probe Accuracy"},
+            ax=ax,
+        )
+        ax.set_xlabel("Token Location")
+        ax.set_ylabel("Layer")
+        ax.tick_params(axis="x", rotation=25)
+        pair = (subset.iloc[0]["minuend_model"], subset.iloc[0]["subtrahend_model"])
+        filename = (
+            f"linear_probe_delta_heatmap_{_filename_slug(str(pair[0]))}"
+            f"_minus_{_filename_slug(str(pair[1]))}_{_filename_slug(str(target))}.png"
+        )
+        paths.append(_save_figure(fig, output_dir / filename))
+    return paths
+
+
+def _goal2_precomputed_layer_table(subset: pd.DataFrame, value_column: str) -> pd.DataFrame:
+    """Pivot one precomputed layer-by-location table without aggregation."""
+    if subset.empty:
+        return pd.DataFrame()
+    working = subset.copy()
+    working["layer_order"] = working["layer_index"].map(_layer_sort_key)
+    table = working.pivot(
+        index="layer_order",
+        columns="location_kind",
+        values=value_column,
+    )
+    table = table.reindex(
+        index=sorted(table.index),
+        columns=sorted(table.columns, key=_location_sort_key),
+    )
+    table.index = [str(value) for value in table.index]
+    table.columns = [_display_label(value) for value in table.columns]
+    return table
+
+
+def _goal2_precomputed_timing_curves(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render best-layer timing curves from precomputed column-averaged values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "summary_model")
+        & figure_metrics["prompt_mode"].isna()
+        & figure_metrics["location_kind"].isin(GOAL2_TIMING_LOCATION_ORDER)
+    ].copy()
+    paths = []
+    for target, subset in rows.groupby("target", sort=True):
+        paths.append(
+            _goal2_precomputed_line_plot(
+                subset,
+                value_column="test_accuracy",
+                output_path=output_dir / f"linear_probe_timing_{_filename_slug(str(target))}.png",
+                ylabel="Best-Layer Probe Accuracy",
+                hue_column="model_name",
+                ylim=(0, 1),
+            )
+        )
+    return paths
+
+
+def _goal2_precomputed_layer_profile(
+    figure_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> Path | None:
+    """Render the free-CoT layer profile from precomputed layer values."""
+    rows = figure_metrics[
+        (figure_metrics["figure_data_kind"] == "layer_model")
+        & (figure_metrics["prompt_mode"] == "free_cot")
+        & figure_metrics["location_kind"].isin(GOAL2_LAYER_PROFILE_LOCATIONS)
+    ].copy()
+    if rows.empty:
+        return None
+    rows["target_label"] = rows["target"].map(_display_label)
+    rows["location_label"] = rows["location_kind"].map(_display_label)
+    rows["location_order"] = rows["location_kind"].map(_location_sort_key)
+    rows["layer_order"] = rows["layer_index"].map(_layer_sort_key)
+    targets = sorted(rows["target"].unique(), key=_target_sort_key)
+    target_labels = [_display_label(target) for target in targets]
+    fig, axes = plt.subplots(
+        1,
+        len(target_labels),
+        figsize=(3.2 * len(target_labels) + 2.6, 3.6),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    palette = _model_palette(rows)
+    markers = _goal2_layer_profile_markers(rows)
+    for ax, target_label in zip(axes.flat, target_labels, strict=True):
+        target_rows = rows[rows["target_label"] == target_label]
+        for (model_name, location_label), group in target_rows.groupby(
+            ["model_name", "location_label"],
+            sort=True,
+        ):
+            group = group.sort_values("layer_order")
+            ax.plot(
+                group["layer_order"],
+                group["test_accuracy"],
+                color=palette.get(model_name, MODEL_PALETTE[0]),
+                marker=markers.get(location_label, "o"),
+                markevery=GOAL2_LAYER_PROFILE_MARK_EVERY,
+                linewidth=1.5,
+                markersize=4.5,
+            )
+        ax.set_ylim(0, 1)
+        ax.text(
+            0.03,
+            0.95,
+            target_label,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontweight="semibold",
+        )
+        sns.despine(fig=fig, ax=ax)
+    fig.supxlabel("Layer", y=0.03)
+    fig.supylabel("Probe Accuracy", x=0.03)
+    _goal2_precomputed_layer_profile_legend(fig, rows, palette, markers)
+    return _save_figure_with_legend_space(
+        fig,
+        output_dir / "goal2_layer_profile_by_target_free_cot.png",
+    )
+
+
+def _goal2_precomputed_layer_profile_legend(
+    fig: plt.Figure,
+    rows: pd.DataFrame,
+    palette: dict[object, object],
+    markers: dict[str, str],
+) -> None:
+    """Add the standard model and token-location legend to a layer profile."""
+    fig.legend(
+        handles=[
+            Line2D([], [], linestyle="none", label="Model Name"),
+            *[
+                Line2D([0], [0], color=color, linewidth=1.8, label=_display_label(model))
+                for model, color in palette.items()
+            ],
+            Line2D([], [], linestyle="none", label="Token Location"),
+            *[
+                Line2D(
+                    [0],
+                    [0],
+                    color="#333333",
+                    marker=markers.get(label, "o"),
+                    linewidth=1.2,
+                    markersize=4.5,
+                    label=label,
+                )
+                for label in _available_location_labels(rows)
+            ],
+        ],
+        loc="center left",
+        bbox_to_anchor=(0.805, 0.54),
+        handlelength=1.8,
+        labelspacing=0.55,
+        borderaxespad=0,
+    )
 
 
 def _make_goal2_probe_figure_sets(
@@ -235,22 +1333,44 @@ def _make_goal2_probe_figure_set(
     delta_metrics = delta_prediction_metrics
     if delta_metrics.empty and not {"model_name", "example_id"}.issubset(predictions.columns):
         delta_metrics = metrics
+    prompt_metrics = _goal2_prompt_metric_df(predictions)
+    prompt_delta_metrics = _goal2_prompt_metric_df(delta_predictions)
+    return _render_goal2_probe_figure_set(
+        metrics=metrics,
+        delta_metrics=delta_metrics,
+        prompt_metrics=prompt_metrics,
+        prompt_delta_metrics=prompt_delta_metrics,
+        bootstrap_metrics=pd.DataFrame(),
+        output_dir=output_dir,
+    )
+
+
+def _render_goal2_probe_figure_set(
+    metrics: pd.DataFrame,
+    delta_metrics: pd.DataFrame,
+    prompt_metrics: pd.DataFrame,
+    prompt_delta_metrics: pd.DataFrame,
+    bootstrap_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Render one Goal 2 figure set from probe-stage metric tables."""
     summary_dir = ensure_dir(output_dir / "summary")
     diagnostics_dir = ensure_dir(output_dir / "diagnostics")
     paths = [
         *_goal2_target_summary_matrices(metrics, summary_dir),
         _goal2_target_summary_delta_matrix(delta_metrics, summary_dir),
-        *_goal2_target_summary_matrices_by_prompt_mode(predictions, summary_dir),
-        *_goal2_target_summary_delta_matrices_by_prompt_mode(
-            delta_predictions, summary_dir
-        ),
+        *_goal2_target_summary_matrices_by_prompt_mode(prompt_metrics, summary_dir),
+        *_goal2_target_summary_delta_matrices_by_prompt_mode(prompt_delta_metrics, summary_dir),
         _goal2_reasoning_time_by_column(metrics, summary_dir),
         _goal2_reasoning_time_by_column_delta(delta_metrics, summary_dir),
-        _goal2_layer_profile_by_target_free_cot(predictions, summary_dir),
+        _goal2_layer_profile_by_target_free_cot(prompt_metrics, summary_dir),
         *_goal2_probe_heatmaps(metrics, diagnostics_dir),
         *_goal2_probe_delta_heatmaps(delta_metrics, diagnostics_dir),
         *_goal2_probe_timing_curves(metrics, diagnostics_dir),
     ]
+    if not bootstrap_metrics.empty:
+        inference_dir = ensure_dir(output_dir / "inference")
+        paths.extend(_goal2_paired_bootstrap_plots(bootstrap_metrics, inference_dir))
     return [path for path in paths if path is not None]
 
 
@@ -806,9 +1926,7 @@ def _binomial_ci(successes: int, total: int, z_score: float = 1.96) -> tuple[flo
     z_squared = z_score**2
     denominator = 1 + z_squared / total
     center = proportion + z_squared / (2 * total)
-    margin = z_score * (
-        (proportion * (1 - proportion) + z_squared / (4 * total)) / total
-    ) ** 0.5
+    margin = z_score * ((proportion * (1 - proportion) + z_squared / (4 * total)) / total) ** 0.5
     return max(0.0, (center - margin) / denominator), min(
         1.0,
         (center + margin) / denominator,
@@ -924,8 +2042,7 @@ def _goal2_target_summary_matrices(metrics: pd.DataFrame, output_dir: Path) -> l
         paths.append(
             _save_figure(
                 fig,
-                output_dir
-                / f"goal2_target_summary_matrix_{_filename_slug(str(model_name))}.png",
+                output_dir / f"goal2_target_summary_matrix_{_filename_slug(str(model_name))}.png",
             )
         )
     return paths
@@ -968,11 +2085,13 @@ def _goal2_target_summary_delta_matrix(
 
 
 def _goal2_target_summary_matrices_by_prompt_mode(
-    predictions: pd.DataFrame,
+    metrics: pd.DataFrame,
     output_dir: Path,
 ) -> list[Path]:
     """Generate target-by-location summary matrices split by prompt mode."""
-    plot_df = _goal2_prompt_metric_df(predictions)
+    if metrics.empty or not {"prompt_mode", "target"}.issubset(metrics.columns):
+        return []
+    plot_df = _prepare_goal2_metric_df(metrics)
     if plot_df.empty:
         return []
     paths = []
@@ -1006,11 +2125,13 @@ def _goal2_target_summary_matrices_by_prompt_mode(
 
 
 def _goal2_target_summary_delta_matrices_by_prompt_mode(
-    predictions: pd.DataFrame,
+    metrics: pd.DataFrame,
     output_dir: Path,
 ) -> list[Path]:
     """Generate target-by-location two-model delta matrices split by prompt mode."""
-    plot_df = _goal2_prompt_metric_df(predictions)
+    if metrics.empty or not {"prompt_mode", "target"}.issubset(metrics.columns):
+        return []
+    plot_df = _prepare_goal2_metric_df(metrics)
     if plot_df.empty:
         return []
     paths = []
@@ -1020,9 +2141,7 @@ def _goal2_target_summary_delta_matrices_by_prompt_mode(
             continue
         minuend, subtrahend = model_pair
         minuend_table = _goal2_target_summary_table(subset[subset["model_name"] == minuend])
-        subtrahend_table = _goal2_target_summary_table(
-            subset[subset["model_name"] == subtrahend]
-        )
+        subtrahend_table = _goal2_target_summary_table(subset[subset["model_name"] == subtrahend])
         delta = _aligned_delta_table(minuend_table, subtrahend_table)
         if delta.empty:
             continue
@@ -1057,8 +2176,9 @@ def _goal2_target_summary_table(subset: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     best = _goal2_best_layer_by_column(subset)
     summary = (
-        best.groupby(["target", "target_label", "location_order", "location_label"])
-        ["test_accuracy"]
+        best.groupby(["target", "target_label", "location_order", "location_label"])[
+            "test_accuracy"
+        ]
         .mean()
         .reset_index()
         .sort_values(["target", "location_order"])
@@ -1149,8 +2269,9 @@ def _goal2_reasoning_time_by_column_delta(
     if delta.empty or model_pair is None:
         return None
     delta = (
-        delta.groupby(["location_kind", "location_label", "location_order"], as_index=False)
-        ["delta_accuracy"]
+        delta.groupby(["location_kind", "location_label", "location_order"], as_index=False)[
+            "delta_accuracy"
+        ]
         .mean()
         .sort_values("location_order")
     )
@@ -1174,11 +2295,13 @@ def _goal2_reasoning_time_by_column_delta(
 
 
 def _goal2_layer_profile_by_target_free_cot(
-    predictions: pd.DataFrame,
+    metrics: pd.DataFrame,
     output_dir: Path,
 ) -> Path | None:
     """Generate free-CoT target-faceted layer profiles for selected locations."""
-    plot_df = _goal2_prompt_metric_df(predictions)
+    if metrics.empty or not {"prompt_mode", "target"}.issubset(metrics.columns):
+        return None
+    plot_df = _prepare_goal2_metric_df(metrics)
     if plot_df.empty:
         return None
     plot_df = plot_df[plot_df["prompt_mode"] == "free_cot"].copy()
@@ -1322,9 +2445,7 @@ def _legend_labels(legend: object) -> list[str]:
 def _available_location_labels(df: pd.DataFrame) -> list[str]:
     """Return location labels present in data using the standard location order."""
     locations = (
-        df[["location_order", "location_label"]]
-        .drop_duplicates()
-        .sort_values("location_order")
+        df[["location_order", "location_label"]].drop_duplicates().sort_values("location_order")
     )
     return list(locations["location_label"])
 
@@ -1514,6 +2635,96 @@ def _goal2_probe_timing_curves(metrics: pd.DataFrame, output_dir: Path) -> list[
                 output_dir / f"linear_probe_timing_{_filename_slug(str(target))}.png",
             )
         )
+    return paths
+
+
+def _goal2_paired_bootstrap_plots(table: pd.DataFrame, output_dir: Path) -> list[Path]:
+    """Plot fixed-layer paired deltas separately by prompt mode and digit length."""
+    table = table.copy()
+    table["layer_order"] = table["layer_index"].map(_layer_sort_key)
+    table["location_order"] = table["location_kind"].map(_location_sort_key)
+    paths = []
+    for (prompt_mode, n_digits), subset in table.groupby(
+        ["prompt_mode", "n_digits"],
+        sort=True,
+    ):
+        target_subset = subset[subset["target"] == "outgoing_carry"].copy()
+        if target_subset.empty:
+            continue
+        target_columns = sorted(target_subset["target_column_lsd"].dropna().unique())
+        if not target_columns:
+            continue
+        fig, axes = plt.subplots(
+            1,
+            len(target_columns),
+            figsize=(max(6.8, 2.7 * len(target_columns)), 3.8),
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+        )
+        location_rows = (
+            target_subset[["location_order", "location_kind"]]
+            .drop_duplicates()
+            .sort_values("location_order")
+        )
+        location_kinds = list(location_rows["location_kind"])
+        colors = dict(
+            zip(location_kinds, sns.color_palette(n_colors=len(location_kinds)), strict=True)
+        )
+        for ax, target_column in zip(axes.flat, target_columns, strict=True):
+            column_rows = target_subset[target_subset["target_column_lsd"] == target_column]
+            for location_kind, location_rows in column_rows.groupby(
+                "location_kind",
+                sort=False,
+            ):
+                location_rows = location_rows.sort_values("layer_order")
+                x = location_rows["layer_order"].to_numpy(dtype=float)
+                y = location_rows["delta_balanced_accuracy"].to_numpy(dtype=float)
+                lower = location_rows["ci_lower"].to_numpy(dtype=float)
+                upper = location_rows["ci_upper"].to_numpy(dtype=float)
+                color = colors[location_kind]
+                ax.plot(
+                    x,
+                    y,
+                    color=color,
+                    linewidth=1.4,
+                    marker="o",
+                    markersize=3.0,
+                    markevery=GOAL2_LAYER_PROFILE_MARK_EVERY,
+                    label=_display_label(location_kind),
+                )
+                ax.fill_between(x, lower, upper, color=color, alpha=0.12, linewidth=0)
+            ax.axhline(0, color="#555555", linewidth=0.7, linestyle=":")
+            ax.set_title(f"Carry column {int(target_column)} (0 = LSD)")
+            ax.set_xlabel("Layer")
+            sns.despine(fig=fig, ax=ax)
+        axes.flat[0].set_ylabel("Paired Delta Balanced Accuracy")
+        max_abs = float(
+            np.nanmax(np.abs(target_subset[["ci_lower", "ci_upper"]].to_numpy(dtype=float)))
+        )
+        limit = min(1.0, max(0.05, max_abs * 1.08))
+        axes.flat[0].set_ylim(-limit, limit)
+        handles = [
+            Line2D([0], [0], color=colors[kind], linewidth=1.8, label=_display_label(kind))
+            for kind in location_kinds
+        ]
+        fig.legend(
+            handles=handles,
+            title="Token Location",
+            loc="center left",
+            bbox_to_anchor=(1.0, 0.5),
+        )
+        fig.suptitle(
+            f"{_display_label(prompt_mode)}, {int(n_digits)} digits: "
+            "Full − SFT on shared problems\n"
+            "Fixed-layer balanced accuracy; Answer Digits uses the matching column only",
+            y=1.04,
+        )
+        filename = (
+            "paired_bootstrap_balanced_accuracy_delta_outgoing_carry_"
+            f"{_filename_slug(str(prompt_mode))}_{int(n_digits)}digits.png"
+        )
+        paths.append(_save_figure(fig, output_dir / filename))
     return paths
 
 

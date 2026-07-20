@@ -1,0 +1,40 @@
+name: goal3_olmo3_natural_cot_pilot
+seed: 13
+dataset_bundle_dir: data/generated/goal3_olmo3_natural_cot
+output_dir: runs
+runner:
+  kind: hf
+  device: auto
+  dtype: bfloat16
+  batch_size: 6
+  trust_remote_code: false
+  quantization: none
+models:
+  - name: olmo3-instruct-sft
+    model_id: allenai/Olmo-3-7B-Instruct-SFT
+  - name: olmo3-instruct-full
+    model_id: allenai/Olmo-3-7B-Instruct
+replay:
+  enabled: false
+residual:
+  enabled: true
+  intervention_scales:
+    - 0.5
+    - 1.0
+    - 2.0
+  control_directions:
+    - carry
+    - orthogonal
+  max_problems_per_digit_length: 5
+  min_train_examples: 20
+  max_iter: 1000
+  c: 1.0
+  require_exact_prefix_alignment: true
+  decode_locations: []
+  decode_layers: []
+  decode_intervention_scale: 1.0
+  generation:
+    max_new_tokens: 16
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false

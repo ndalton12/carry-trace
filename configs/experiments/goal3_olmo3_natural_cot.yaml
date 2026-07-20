@@ -1,0 +1,53 @@
+name: goal3_olmo3_natural_cot
+seed: 13
+dataset_bundle_dir: data/generated/goal3_olmo3_natural_cot
+output_dir: runs
+runner:
+  kind: hf
+  device: auto
+  dtype: bfloat16
+  batch_size: 6
+  trust_remote_code: false
+  quantization: none
+models:
+  - name: olmo3-instruct-sft
+    model_id: allenai/Olmo-3-7B-Instruct-SFT
+  - name: olmo3-instruct-full
+    model_id: allenai/Olmo-3-7B-Instruct
+replay:
+  enabled: true
+  answer_cue: "\nFinal answer:"
+  decode_locations:
+    - prompt_final
+    - cot_end
+  generation:
+    max_new_tokens: 16
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+residual:
+  enabled: true
+  intervention_mode: projection_clamp
+  intervention_scales:
+    - 1.0
+  intervention_sites:
+    - prefix_boundary
+  control_directions:
+    - carry
+    - orthogonal
+  orthogonal_control_count: 3
+  max_problems_per_digit_length: null
+  require_shared_correct_source: true
+  min_train_examples: 20
+  max_iter: 1000
+  c: 1.0
+  require_exact_prefix_alignment: true
+  score_locations:
+    - prompt_final
+    - cot_2_3
+    - cot_end
+  score_layers:
+    - 16
+    - 24
+  decode_locations: []
+  decode_layers: []

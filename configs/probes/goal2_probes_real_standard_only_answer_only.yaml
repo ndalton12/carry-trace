@@ -1,13 +1,14 @@
-name: goal2_probes_real_standard_only
+name: goal2_probes_real_standard_only_answer_only
 goal2_run_dir: runs/runpod/goal2_olmo3_real_standard_only-2026-07-09T025657.008067Z0000
 output_dir: runs/probes
 train_split: train_probe
 test_split: test_probe
+prompt_modes:
+  - answer_only
 targets:
   - incoming_carry
   - outgoing_carry
   - output_digit
-  #- raw_sum
 min_train_examples: 20
 min_test_examples: 5
 max_iter: 1000

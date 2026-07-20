@@ -8,12 +8,18 @@ under `/workspace/carry-trace`.
 From your local checkout:
 
 ```bash
-scripts/sync_to_runpod.sh root@<host>:/workspace/carry-trace/
+scripts/sync_to_runpod.sh root@<host>:/workspace/carry-trace/ 22
 ```
 
 The first sync pass follows `.gitignore`, so local virtualenvs, runs, caches,
 and generated data are skipped. The script then explicitly syncs local `data/`
 so `data/generated/...` datasets are copied to the pod.
+
+To also sync the most recently modified local `runs/runpod/goal2*` directory:
+
+```bash
+scripts/sync_to_runpod.sh --include-latest-goal2-run root@<host>:/workspace/carry-trace/ 22
+```
 
 ## 2. Set Up The Pod
 

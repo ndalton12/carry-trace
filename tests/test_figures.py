@@ -3,7 +3,14 @@ from pathlib import Path
 import pandas as pd
 
 import carry_trace.figures as figures
-from carry_trace.io import write_jsonl
+from carry_trace.goal2_probe_analysis import (
+    GOAL2_BOOTSTRAP_METRICS_FILENAME,
+    GOAL2_FIGURE_METRICS_FILENAME,
+    GOAL2_SHARED_SLICE_METRICS_FILENAME,
+    GOAL2_SLICE_METRICS_FILENAME,
+    build_goal2_probe_analysis,
+)
+from carry_trace.io import write_json, write_jsonl
 
 
 def test_goal1_figures_exclude_token_limit_hits_by_default(
@@ -151,9 +158,7 @@ def test_standard_format_digit_accuracy_filters_nonstandard_formats() -> None:
     accuracy = figures._standard_format_digit_accuracy(df)
 
     assert list(
-        accuracy[["model_name", "n_digits", "correct", "total", "accuracy"]].itertuples(
-            index=False
-        )
+        accuracy[["model_name", "n_digits", "correct", "total", "accuracy"]].itertuples(index=False)
     ) == [
         ("model-a", 2, 1, 2, 0.5),
         ("model-b", 4, 1, 1, 1.0),
@@ -576,8 +581,7 @@ def test_goal2_probe_figures_generate_summary_delta_outputs(tmp_path: Path) -> N
     delta_slug = "Olmo3-Instruct-Full_minus_Olmo3-Instruct-Sft"
 
     assert (
-        f"standard/summary/goal2_reasoning_time_by_column_delta_{delta_slug}.png"
-        in relative_paths
+        f"standard/summary/goal2_reasoning_time_by_column_delta_{delta_slug}.png" in relative_paths
     )
 
 
@@ -647,6 +651,160 @@ def test_goal2_probe_figures_generate_prompt_mode_split_outputs(tmp_path: Path) 
     )
 
 
+def test_goal2_probe_figures_generate_paired_bootstrap_outputs(tmp_path: Path) -> None:
+    """Verify paired bootstrap outputs stratify problems and use same-column answer rows."""
+    probe_dir = tmp_path / "probe"
+    write_jsonl(
+        probe_dir / "probe_metrics.jsonl",
+        [
+            _probe_metric(
+                "outgoing_carry",
+                "prompt_final",
+                0,
+                1.0,
+                target_column_lsd=0,
+                model_name="Olmo3-Instruct-Full",
+            ),
+            _probe_metric(
+                "outgoing_carry",
+                "prompt_final",
+                0,
+                0.0,
+                target_column_lsd=0,
+                model_name="Olmo3-Instruct-Sft",
+            ),
+        ],
+    )
+    rows = []
+    for index, y_true in enumerate((0, 0, 1, 1)):
+        example_id = f"example-{index}"
+        for model_name, correct in (
+            ("Olmo3-Instruct-Full", True),
+            ("Olmo3-Instruct-Sft", False),
+        ):
+            for location_kind in ("prompt_final", "answer_digits"):
+                rows.append(
+                    _probe_prediction(
+                        model_name,
+                        "answer_only",
+                        "outgoing_carry",
+                        location_kind,
+                        0,
+                        y_true=y_true,
+                        probe_correct=correct,
+                        example_id=example_id,
+                    )
+                )
+                if location_kind == "answer_digits":
+                    rows.append(
+                        _probe_prediction(
+                            model_name,
+                            "answer_only",
+                            "outgoing_carry",
+                            location_kind,
+                            0,
+                            y_true=y_true,
+                            probe_correct=not correct,
+                            example_id=example_id,
+                            same_column=False,
+                        )
+                    )
+    (
+        slice_metrics,
+        shared_slice_metrics,
+        figure_metrics,
+        bootstrap_metrics,
+    ) = build_goal2_probe_analysis(rows, bootstrap_replicates=200, random_state=0)
+    write_jsonl(probe_dir / GOAL2_SLICE_METRICS_FILENAME, slice_metrics)
+    write_jsonl(
+        probe_dir / GOAL2_SHARED_SLICE_METRICS_FILENAME,
+        shared_slice_metrics,
+    )
+    write_jsonl(probe_dir / GOAL2_FIGURE_METRICS_FILENAME, figure_metrics)
+    write_jsonl(probe_dir / GOAL2_BOOTSTRAP_METRICS_FILENAME, bootstrap_metrics)
+
+    paths = figures.make_goal2_probe_figures(probe_dir)
+    relative_paths = {path.relative_to(probe_dir / "figures").as_posix() for path in paths}
+    table = pd.DataFrame(bootstrap_metrics)
+
+    assert (
+        "standard/inference/paired_bootstrap_balanced_accuracy_delta_outgoing_carry_"
+        "answer_only_2digits.png"
+    ) in relative_paths
+    assert set(table["position_scope"]) == {"single_location", "same_column"}
+    assert set(table["paired_problem_count"]) == {4}
+    assert set(table["delta_balanced_accuracy"]) == {1.0}
+
+
+def test_goal2_paired_bootstrap_balanced_accuracy_is_problem_paired() -> None:
+    """Verify paired bootstrap deltas use shared problems and fixed-layer balanced accuracy."""
+    rows = []
+    for index, y_true in enumerate((0, 0, 1, 1)):
+        for model_name, correct in (("full", True), ("sft", False)):
+            rows.append(
+                _probe_prediction(
+                    model_name,
+                    "answer_only",
+                    "outgoing_carry",
+                    "prompt_final",
+                    0,
+                    y_true=y_true,
+                    probe_correct=correct,
+                    example_id=f"example-{index}",
+                )
+            )
+
+    _, _, _, bootstrap_metrics = build_goal2_probe_analysis(
+        rows,
+        bootstrap_replicates=200,
+        random_state=0,
+    )
+    table = pd.DataFrame(bootstrap_metrics)
+
+    assert len(table) == 1
+    assert int(table.loc[0, "paired_problem_count"]) == 4
+    assert float(table.loc[0, "minuend_balanced_accuracy"]) == 1.0
+    assert float(table.loc[0, "subtrahend_balanced_accuracy"]) == 0.0
+    assert float(table.loc[0, "ci_lower"]) == 1.0
+    assert float(table.loc[0, "ci_upper"]) == 1.0
+
+
+def test_goal2_probe_analysis_precomputes_summary_and_layer_values() -> None:
+    """Verify figure values are fully aggregated during probe analysis."""
+    rows = []
+    correctness = {
+        (0, 0): (True, False),
+        (0, 1): (True, True),
+        (1, 0): (True, True),
+        (1, 1): (False, False),
+    }
+    for target_column in (0, 1):
+        for layer_index in (0, 1):
+            for example_index, correct in enumerate(correctness[(target_column, layer_index)]):
+                rows.append(
+                    _probe_prediction(
+                        "model",
+                        "answer_only",
+                        "outgoing_carry",
+                        "prompt_final",
+                        target_column,
+                        y_true=example_index,
+                        probe_correct=correct,
+                        example_id=f"example-{example_index}",
+                        layer_index=layer_index,
+                    )
+                )
+
+    _, _, figure_metrics, _ = build_goal2_probe_analysis(rows)
+    table = pd.DataFrame(figure_metrics)
+    pooled = table[table["prompt_mode"].isna()]
+    summary = pooled[pooled["figure_data_kind"] == "summary_model"]
+    layers = pooled[pooled["figure_data_kind"] == "layer_model"].sort_values("layer_index")
+
+    assert list(summary["test_accuracy"]) == [1.0]
+    assert list(layers["test_accuracy"]) == [0.75, 0.5]
+
+
 def test_goal2_probe_figures_generate_format_nested_outputs(tmp_path: Path) -> None:
     """Verify Goal 2 figures are nested by digit and answer format condition."""
     probe_dir = tmp_path / "probe"
@@ -693,14 +851,8 @@ def test_goal2_probe_figures_generate_format_nested_outputs(tmp_path: Path) -> N
     relative_paths = {path.relative_to(probe_dir / "figures").as_posix() for path in paths}
 
     for dirname, _, _ in format_rows:
-        assert (
-            f"{dirname}/summary/goal2_target_summary_matrix_model.png"
-            in relative_paths
-        )
-        assert (
-            f"{dirname}/diagnostics/linear_probe_heatmap_model_any_carry.png"
-            in relative_paths
-        )
+        assert f"{dirname}/summary/goal2_target_summary_matrix_model.png" in relative_paths
+        assert f"{dirname}/diagnostics/linear_probe_heatmap_model_any_carry.png" in relative_paths
 
 
 def test_goal2_prediction_metrics_filter_nonstandard_formats() -> None:
@@ -989,6 +1141,27 @@ def test_goal2_line_plots_do_not_use_column_confidence_intervals(
     assert all(call["errorbar"] is None for call in calls)
 
 
+def test_goal35_figures_write_png_figures_and_text_tables(tmp_path: Path) -> None:
+    """Verify Goal 3.5 presentation outputs render from saved run artifacts."""
+    run_dir = _write_goal35_figure_run(tmp_path)
+
+    paths = figures.make_goal35_figures(run_dir)
+
+    assert {path.name for path in paths} == {
+        "goal35_crossed_replay_cot_end.png",
+        "goal35_incorrect_cot_outcomes.png",
+        "goal35_completion_coverage.png",
+        "goal35_crossed_replay_table.txt",
+        "goal35_incorrect_cot_table.txt",
+        "goal35_completion_coverage_table.txt",
+    }
+    assert all(path.exists() for path in paths)
+    assert (
+        "Accuracy interaction" in (run_dir / "figures/goal35_crossed_replay_table.txt").read_text()
+    )
+    assert "Copied source error" in (run_dir / "figures/goal35_incorrect_cot_table.txt").read_text()
+
+
 def _write_figure_run(tmp_path: Path) -> Path:
     """Write a minimal run directory with one valid and one capped generation."""
     run_dir = tmp_path / "run"
@@ -1043,6 +1216,147 @@ def _write_figure_run(tmp_path: Path) -> Path:
     return run_dir
 
 
+def _write_goal35_figure_run(tmp_path: Path) -> Path:
+    """Write a compact, complete Goal 3.5 run for figure tests."""
+    run_dir = tmp_path / "goal35-run"
+    models = ["olmo3-instruct-sft", "olmo3-instruct-full"]
+    write_json(
+        run_dir / "manifest.json",
+        {
+            "config": {
+                "seed": 7,
+                "analysis": {"bootstrap_samples": 100, "confidence_level": 0.95},
+                "models": [{"name": model} for model in models],
+            }
+        },
+    )
+    write_jsonl(
+        run_dir / "completion_audits.jsonl",
+        [
+            {
+                "example_id": f"example-{source}",
+                "problem_id": "problem",
+                "n_digits": 4,
+                "source_model_name": source,
+                "source_answer_correct": False,
+                "clean_terminal_answer": True,
+                "parsed_answer": str(11 + index),
+                "source_cohort": "goal35_native",
+                "source_run_id": "goal35-run",
+            }
+            for index, source in enumerate(models)
+        ],
+    )
+    generations = []
+    scores = []
+    for receiver in models:
+        for source in models:
+            parsed_answer = (
+                "10"
+                if source == models[0] and receiver == models[1]
+                else "11"
+                if source == models[0]
+                else "12"
+            )
+            generations.append(
+                {
+                    "id": f"generation-{receiver}-{source}",
+                    "problem_id": "problem",
+                    "n_digits": 4,
+                    "receiver_model_name": receiver,
+                    "source_model_name": source,
+                    "location_kind": "cot_end",
+                    "parsed_answer": parsed_answer,
+                    "exact_match": parsed_answer == "10",
+                }
+            )
+            scores.append(
+                {
+                    "id": f"score-{receiver}-{source}",
+                    "problem_id": "problem",
+                    "n_digits": 4,
+                    "receiver_model_name": receiver,
+                    "source_model_name": source,
+                    "location_kind": "cot_end",
+                    "expected_answer_logprob": -float(1 + models.index(source)),
+                }
+            )
+    write_jsonl(run_dir / "replay_generations.jsonl", generations)
+    write_jsonl(run_dir / "replay_scores.jsonl", scores)
+    interaction_rows = [
+        {
+            "analysis": "receiver_by_source_interaction",
+            "subset": subset,
+            "n_digits": None,
+            "location_kind": "cot_end",
+            "logprob_interaction_n": 1,
+            "generation_accuracy_interaction_n": 1,
+            "mean_generation_accuracy_interaction": 1.0,
+            "generation_accuracy_interaction_ci_lower": 1.0,
+            "generation_accuracy_interaction_ci_upper": 1.0,
+            "mean_logprob_interaction": 0.0,
+            "logprob_interaction_ci_lower": 0.0,
+            "logprob_interaction_ci_upper": 0.0,
+        }
+        for subset in ["all_shared", "both_source_correct", "both_source_correct_clean"]
+    ]
+    incorrect_rows = []
+    for source in models:
+        for receiver in models:
+            replay_accuracy = float(source == models[0] and receiver == models[1])
+            incorrect_rows.append(
+                {
+                    "analysis": "incorrect_source_entrainment",
+                    "source_cohort": "all",
+                    "source_run_id": None,
+                    "n_digits": None,
+                    "source_model_name": source,
+                    "receiver_model_name": receiver,
+                    "n": 1,
+                    "direct_generation_accuracy": 1.0,
+                    "replay_generation_accuracy": replay_accuracy,
+                    "mean_generation_accuracy_delta": replay_accuracy - 1.0,
+                    "generation_accuracy_delta_ci_lower": replay_accuracy - 1.0,
+                    "generation_accuracy_delta_ci_upper": replay_accuracy - 1.0,
+                    "same_source_answer_rate": 1.0 - replay_accuracy,
+                }
+            )
+    write_jsonl(
+        run_dir / "replay_primary_metrics.jsonl",
+        [*interaction_rows, *incorrect_rows],
+    )
+    write_jsonl(
+        run_dir / "completion_coverage.jsonl",
+        [
+            {
+                "model_name": model,
+                "n_digits": n_digits,
+                "requested": 2,
+                "token_limit_hits": int(model == models[1]),
+                "eligible_for_shared_replay": 2 - int(model == models[1]),
+                "selected_for_shared_replay": 1,
+                "selected_source_accuracy": 0.5,
+                "selected_clean_rate": 1.0,
+            }
+            for n_digits in [4, 6]
+            for model in models
+        ],
+    )
+    write_jsonl(
+        run_dir / "historical_import_status.jsonl",
+        [
+            {
+                "status": "selected",
+                "source_run_id": "historical-run",
+                "model_name": model,
+                "problem_id": f"historical-{model}",
+            }
+            for model in models
+        ],
+    )
+    return run_dir
+
+
 def _probe_metric(
     target: str,
     location_kind: str,
@@ -1077,18 +1391,25 @@ def _probe_prediction(
     digit_format: str = "standard",
     answer_format: str = "standard",
     example_id: str = "example",
+    n_digits: int = 2,
+    same_column: bool = True,
+    layer_index: int = 0,
 ) -> dict[str, object]:
     """Return one Goal 2 probe prediction row with prompt metadata."""
     return {
         "example_id": example_id,
+        "problem_id": example_id,
         "model_name": model_name,
         "prompt_mode": prompt_mode,
+        "n_digits": n_digits,
         "digit_format": digit_format,
         "answer_format": answer_format,
         "target": target,
         "target_column_lsd": target_column_lsd,
         "location_kind": location_kind,
-        "layer_index": "0",
+        "layer_index": str(layer_index),
+        "same_column": same_column,
         "y_true": y_true,
+        "y_pred": y_true if probe_correct else 1 - y_true,
         "probe_correct": probe_correct,
     }

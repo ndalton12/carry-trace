@@ -14,11 +14,17 @@ from carry_trace.config import (
     load_experiment_config,
     load_goal2_config,
     load_goal2_probe_config,
+    load_goal3_dataset_config,
+    load_goal3_run_config,
+    load_goal35_config,
 )
 from carry_trace.datasets import generate_dataset, upload_dataset_to_hub
-from carry_trace.figures import make_goal1_figures, make_goal2_probe_figures
+from carry_trace.figures import make_goal1_figures, make_goal2_probe_figures, make_goal35_figures
 from carry_trace.goal2 import run_goal2
 from carry_trace.goal2_probes import run_goal2_probes
+from carry_trace.goal3 import run_goal3
+from carry_trace.goal3_datasets import generate_goal3_dataset_bundle
+from carry_trace.goal35 import run_goal35
 from carry_trace.inspect import inspect_tokenizer
 from carry_trace.runs import run_goal1
 
@@ -45,6 +51,22 @@ def dataset_generate(
     dataset_config = load_dataset_config(config)
     jsonl_path, manifest_path, rows = generate_dataset(dataset_config)
     console.print(f"Wrote {len(rows)} examples to {jsonl_path}")
+    console.print(f"Wrote manifest to {manifest_path}")
+
+
+@dataset_app.command("goal3")
+def dataset_goal3(
+    config: Annotated[Path, typer.Option(exists=True, readable=True)],
+) -> None:
+    """Derive Goal 3 natural-CoT datasets from a completed Goal 2 run."""
+    dataset_config = load_goal3_dataset_config(config)
+    manifest_path, counts = generate_goal3_dataset_bundle(dataset_config)
+    console.print(
+        "Wrote Goal 3 dataset bundle with "
+        f"{counts['replay_prefixes']} replay prefixes, "
+        f"{counts['replay_cases']} replay cases, and "
+        f"{counts['residual_intervention_cases']} residual intervention cases"
+    )
     console.print(f"Wrote manifest to {manifest_path}")
 
 
@@ -115,6 +137,37 @@ def run_goal2_command(
     console.print(f"Wrote activation artifacts to {run_dir}")
 
 
+@run_app.command("goal3")
+def run_goal3_command(
+    config: Annotated[Path, typer.Option(exists=True, readable=True)],
+) -> None:
+    """Run Goal 3 natural-CoT replay and residual interventions."""
+    goal3_config = load_goal3_run_config(config)
+    run_dir = run_goal3(goal3_config)
+    console.print(f"Wrote Goal 3 artifacts to {run_dir}")
+
+
+@run_app.command("goal35")
+def run_goal35_command(
+    config: Annotated[Path, typer.Option(exists=True, readable=True)],
+    resume_run_dir: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            readable=True,
+            writable=True,
+            help="Reuse an existing Goal 3.5 run and append missing replay cases.",
+        ),
+    ] = None,
+) -> None:
+    """Run Goal 3.5 source generation and crossed natural-CoT replay."""
+    goal35_config = load_goal35_config(config)
+    run_dir = run_goal35(goal35_config, resume_run_dir=resume_run_dir)
+    console.print(f"Wrote Goal 3.5 artifacts to {run_dir}")
+
+
 @probe_app.command("goal2")
 def probe_goal2_command(
     config: Annotated[Path, typer.Option(exists=True, readable=True)],
@@ -170,6 +223,24 @@ def figures_goal2(
     if not probe_dir.exists():
         probe_dir = probes_dir / probe_id
     paths = make_goal2_probe_figures(probe_dir, output_dir)
+    for path in paths:
+        console.print(f"Wrote {path}")
+
+
+@figures_app.command("goal35")
+def figures_goal35(
+    run_id: Annotated[
+        str,
+        typer.Option(help="Goal 3.5 run directory name under runs/, or a full path."),
+    ],
+    runs_dir: Annotated[Path, typer.Option()] = Path("runs"),
+    output_dir: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Generate Goal 3.5 figures and plain-text result tables."""
+    run_dir = Path(run_id)
+    if not run_dir.exists():
+        run_dir = runs_dir / run_id
+    paths = make_goal35_figures(run_dir, output_dir)
     for path in paths:
         console.print(f"Wrote {path}")
 

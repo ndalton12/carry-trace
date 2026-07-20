@@ -1,0 +1,58 @@
+name: goal35_olmo3_natural_cot_replay
+seed: 20260718
+output_dir: runs
+dataset:
+  name: goal35_olmo3_natural_cot_replay
+  output_dir: data/generated
+  split: test_replay
+  examples_per_digit_length: 64
+  digit_lengths:
+    - 4
+    - 6
+  balance_carry_count: true
+models:
+  - name: olmo3-instruct-sft
+    model_id: allenai/Olmo-3-7B-Instruct-SFT
+    tokenizer_id: allenai/Olmo-3-7B-Instruct
+  - name: olmo3-instruct-full
+    model_id: allenai/Olmo-3-7B-Instruct
+    tokenizer_id: allenai/Olmo-3-7B-Instruct
+tokenizer_id: allenai/Olmo-3-7B-Instruct
+tokenizer_revision: null
+tokenizer_local_files_only: false
+runner:
+  kind: hf
+  device: auto
+  dtype: bfloat16
+  batch_size: 2
+  trust_remote_code: false
+  quantization: none
+source_generation:
+  max_new_tokens: 4096
+  temperature: 0.6
+  top_p: 0.95
+  do_sample: true
+source_locations:
+  - cot_1_3
+  - cot_2_3
+  - cot_end
+require_no_token_limit_hit: true
+historical_source_run_dirs:
+  - runs/runpod/goal1_olmo3_real-2026-06-28T141025.185238Z0000
+  - runs/runpod/goal2_olmo3_real-2026-07-01T200139.108117Z0000
+  - runs/runpod/goal2_olmo3_real_standard_only-2026-07-09T025657.008067Z0000
+replay:
+  enabled: true
+  answer_cue: "\nFinal answer:"
+  decode_locations:
+    - prompt_final
+    - cot_2_3
+    - cot_end
+  generation:
+    max_new_tokens: 16
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+analysis:
+  bootstrap_samples: 10000
+  confidence_level: 0.95

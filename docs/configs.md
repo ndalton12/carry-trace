@@ -138,6 +138,150 @@ Dataset rows also support optional Goal 3 matching metadata:
 Ordinary Goal 1 rows include `problem_id` but omit empty matching fields from
 JSONL and Parquet artifacts.
 
+## Goal 3 Dataset Bundles
+
+Goal 3 dataset bundles are derived from a completed Goal 2 activation run:
+
+```bash
+uv run carry-trace dataset goal3 \
+  --config configs/datasets/goal3_olmo3_natural_cot.yaml
+```
+
+The derivation reuses the original natural free-CoT output and the
+`output_token_index` token anchors saved for Goal 2 activation locations. New
+Goal 2 runs provide the exact generated token IDs. For legacy runs that omit
+them, the command retokenizes the decoded output and aligns each boundary to
+the nearest matching recorded token ID; every prefix records the alignment
+method and index offset. Terminal control tokens are not included in assistant
+prefills. It does not regenerate, normalize, or impose a structured CoT. The
+source dataset is joined
+by `example_id` to recover prompts, arithmetic labels, `problem_id`, and the
+native answer-only example for the same problem.
+
+Top-level Goal 3 dataset fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Output dataset-bundle directory under `output_dir`. |
+| `source_goal2_run_dir` | path | Completed Goal 2 activation run containing `manifest.json` and `activations.jsonl`. |
+| `source_dataset_path` | path or null | Original Goal 2 dataset. Defaults to `dataset_path` in the source manifest. |
+| `output_dir` | path | Parent directory for the derived bundle. |
+| `schema_version` | string | Schema version written to every Goal 3 row. |
+| `splits` | list of strings | Source example splits to include. |
+| `models` | list of strings or null | Source model names. Null infers all filtered models in the activation run. |
+| `digit_lengths` | list of integers | Source operand lengths to include. The proposed primary analysis uses 2 and 4. |
+| `prompt_modes` | list of `PromptMode` | Source prompt modes. The natural-CoT design uses `free_cot`. |
+| `digit_formats` | list of `DigitFormat` | Source operand formats. The primary design uses `standard`. |
+| `answer_formats` | list of `AnswerFormat` | Source answer formats. The primary design uses `standard`. |
+| `require_shared_models` | boolean | Keep only examples with an eligible activation record for every requested model. |
+| `include_token_limit_hits` | boolean | Include capped generations. Defaults to false. |
+| `replay` | object | Goal 3A/3B natural-CoT prefix and receiver-crossing settings. |
+| `residual` | object | Goal 3C residual-intervention specification settings. |
+
+Replay fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | boolean | Materialize `replay_prefixes.jsonl` and `replay_cases.jsonl`. |
+| `locations` | list of `ActivationLocation` | Goal 2 token boundaries to materialize. `prompt_final` produces one empty, no-reasoning prefix per example. |
+| `crossed_models` | boolean | Cross every nonempty source-model prefix with every requested receiver model. When false, emit self-replay cases only. |
+| `tokenizer_id` | string or null | Optional tokenizer override. Otherwise use the tokenizer ID saved on each activation record. |
+| `tokenizer_revision` | string or null | Optional tokenizer revision override. |
+| `tokenizer_local_files_only` | boolean | Require the tokenizer to be present in the local Hugging Face cache. |
+| `max_token_alignment_shift` | integer | Maximum index shift allowed when aligning a legacy decoded output to its recorded Goal 2 token anchor. |
+
+Residual-intervention fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | boolean | Materialize `residual_intervention_cases.jsonl`. |
+| `targets` | list of `ProbeTarget` | Probe-guided intervention variables. Supported values are `incoming_carry` and `outgoing_carry`. |
+| `locations` | list of `ActivationLocation` | Natural Goal 2 positions at which later runners should intervene. |
+| `layers` | list of integers | Saved residual layers to reference. The proposed 8/16/24 set is a robustness grid, not best-layer selection. |
+| `direction_train_split` | string | Source split later used to estimate the column-specific residual direction. |
+| `target_columns_by_target` | map target to digit-length maps | Eligible least-significant-first carry columns for each target and operand length. Incoming carry at column `c` affects output `c`; outgoing carry from `c` affects output `c+1`. |
+| `require_stable_outgoing_carry` | boolean | Require the factual and flipped carry to produce the same carry out of the affected output column, keeping the counterfactual local to one digit. |
+
+`outgoing_carry[c]` and `incoming_carry[c+1]` are the same arithmetic label.
+With the global token locations in the proposed config, outgoing carry is an
+equivalence/control target; it is not an independent source of evidence.
+
+The bundle contains:
+
+- `replay_prefixes.jsonl`: unique natural assistant prefixes with replay token
+  IDs, original output, source-model metadata, recorded and replay boundary
+  indices, and the Goal 2 location;
+- `replay_cases.jsonl`: no-reasoning, self-replay, and crossed-replay receiver
+  assignments for Goals 3A and 3B;
+- `residual_intervention_cases.jsonl`: factual/counterfactual carry labels,
+  carry and affected-output columns, target digits and answers, activation
+  tensor coordinates, direction IDs, and expected unchanged output columns for
+  Goal 3C;
+- `manifest.json`: source paths, filters, model names, config hash, and counts.
+
+The analysis and interpretation plan for these artifacts is in
+`docs/goal3-plan.md`.
+
+## Goal 3 Execution Configs
+
+Run the derived bundle with:
+
+```bash
+uv run carry-trace run goal3 \
+  --config configs/experiments/goal3_olmo3_natural_cot.yaml
+```
+
+Top-level fields are `name`, `seed`, `dataset_bundle_dir`, `output_dir`,
+`models`, `runner`, `replay`, and `residual`. Goal 3 currently requires the
+Hugging Face runner because residual interventions use decoder-layer hooks.
+
+Replay execution fields:
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Run Goals 3A/3B replay scoring. |
+| `answer_cue` | Fixed assistant text inserted before answer scoring or generation. |
+| `decode_locations` | Prefix locations that receive deterministic autoregressive decoding. All locations are still teacher-force scored. |
+| `generation` | Short deterministic decoding parameters. |
+
+Residual execution fields:
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Run Goal 3C direction fitting and interventions. |
+| `intervention_mode` | `fixed_gap` adds the train-set class-mean gap; `projection_clamp` moves the live carry projection toward the counterfactual class mean. |
+| `intervention_scales` | Positive intervention multipliers. Fixed-gap mode scales the class-mean gap; clamp mode interpolates toward the counterfactual mean, with `1.0` giving an exact clamp. |
+| `intervention_sites` | Apply at the saved `prefix_boundary`, the final fixed `answer_cue` token, or both. Answer-cue clamps retain the prefix-boundary calibration magnitude. |
+| `control_directions` | Intervention vectors to execute. `carry` is primary; `orthogonal` is a deterministic norm-matched control. |
+| `orthogonal_control_count` | Number of deterministic orthogonal replicates. Their effects are averaged in the paired contrast artifact. |
+| `max_problems_per_digit_length` | Optional deterministic per-length problem cap used by the pilot. Null keeps the full population. |
+| `require_shared_correct_source` | Keep only selected problems with correct, cleanly terminated source completions from every intervention model. |
+| `score_locations`, `score_layers` | Optional residual-case scoring subset. Null uses every location or layer in the dataset bundle. |
+| `min_train_examples`, `max_iter`, `c` | Train-split logistic-direction fitting settings. |
+| `require_exact_prefix_alignment` | Exclude legacy cases whose replay token is not the exact saved activation token. |
+| `decode_locations`, `decode_layers` | Focused subset receiving baseline and intervened autoregressive decoding. All eligible cases receive teacher-forced sequence scoring. |
+| `decode_intervention_scale` | Carry-direction scale used for focused decoding. Controls are not decoded. |
+| `generation` | Short deterministic intervention-decoding parameters. |
+
+The run writes raw replay and residual scores, reduced generation records,
+paired replay effects, fitted direction tensors and metadata, completion audits,
+grouped summary metrics, and a resumable manifest. Whole-answer factual and
+counterfactual sequence probabilities are used instead of per-digit-token
+probabilities, so merged number tokens do not invalidate Goal 3C.
+
+The calibration pilot uses the same command with
+`configs/experiments/goal3_olmo3_natural_cot_pilot.yaml`. It deterministically
+selects five problems per digit length, disables replay and decoding, crosses
+three intervention scales with carry and orthogonal directions, and writes
+`residual_control_contrasts.jsonl` with paired carry-minus-control effects.
+
+The clamp diagnostic uses
+`configs/experiments/goal3_olmo3_natural_cot_clamp_pilot.yaml`. It filters the
+same selected problems to shared correct, clean completions; clamps projections
+at layers 16 and 24; compares prefix-boundary and answer-cue application; and
+averages three norm-matched orthogonal controls. Raw residual rows include the
+requested and realized BF16 projection changes and shift norms.
+
 ## Experiment Configs
 
 Experiment configs are passed to:
@@ -372,6 +516,7 @@ Probe config fields:
 | `output_dir` | path | Parent directory for probe artifacts. Defaults to `runs/probes`. |
 | `train_split` | string | Dataset split used to train probes. Defaults to `train_probe`. |
 | `test_split` | string | Dataset split used to evaluate probes. Defaults to `test_probe`. |
+| `prompt_modes` | list of `PromptMode` or null | Optional prompt-mode filter applied before fitting. Use separate answer-only and free-CoT runs when prompt-specific probes are required. |
 | `targets` | list of `ProbeTarget` | Probe targets. Defaults to all supported targets. |
 | `min_train_examples` | integer | Minimum train samples required to fit a probe group. |
 | `min_test_examples` | integer | Minimum test samples required to evaluate a probe group. |
@@ -398,21 +543,35 @@ Probe training excludes activation records whose generation metadata has
 CoT-derived locations (`cot_start`, `cot_1_3`, `cot_2_3`, and `cot_end`) are
 used only for examples whose `prompt_mode` is `free_cot`; they are ignored for
 answer-only examples even if the model generated extra text.
-For column-specific targets, the default ambiguity guard drops digit-indexed
+For column-specific targets, the optional ambiguity guard drops digit-indexed
 samples where multiple digit locations share one tokenizer token. This avoids
 training the same activation against potentially conflicting column labels when
 the tokenizer merged multiple digits into one token. The default is `false`
 because merged digit tokens are part of the tokenization effect we usually want
-to measure. Probe artifacts record `target_column_lsd`, `location_lsd_index`,
-and `same_column` so analyses can separate same-column, cross-column, and
-non-column locations.
+to measure. Probe artifacts record `problem_id`, `target_column_lsd`,
+`location_lsd_index`, and `same_column` so analyses can use problem-level
+pairing and separate same-column, cross-column, and non-column locations.
 
 Goal 2 probe runs write:
 
 - `probe_metrics.jsonl`
 - `probe_predictions.jsonl`
+- `probe_slice_metrics.jsonl`: exact test metrics pooled and stratified by
+  prompt mode, digit length, format, and answer-position scope.
+- `probe_shared_slice_metrics.jsonl`: the same metrics restricted to examples
+  available for every model.
+- `probe_figure_metrics.jsonl`: best-layer summaries, layer profiles, and
+  paired model deltas fully aggregated for plotting.
+- `probe_bootstrap_metrics.jsonl`: fixed-layer paired balanced-accuracy
+  comparisons with problem-clustered confidence intervals.
 - `manifest.json`
 - run-local `figures/` after `carry-trace figures goal2`
+
+All statistical aggregation happens during probe generation. For these new
+artifacts, the figure command reads `probe_figure_metrics.jsonl` and
+`probe_bootstrap_metrics.jsonl` and only performs display reshaping and
+rendering; it does not reopen or aggregate the large prediction file. Legacy
+probe artifacts without the analysis tables retain a compatibility path.
 
 Goal 2 probe figures are generated with:
 
@@ -426,10 +585,9 @@ The figure command organizes Goal 2 plots into subdirectories under
 `figures/summary/` contains compact paper-facing summaries:
 
 - `goal2_target_summary_matrix_<model>.png`: target-by-location matrix using
-  accuracy above majority baseline, averaged over columns after selecting the
-  best layer.
+  raw accuracy, averaged over columns after selecting the best layer.
 - `goal2_target_summary_delta_<model_a>_minus_<model_b>.png`: two-model
-  target-by-location difference in accuracy above majority baseline. When the
+  target-by-location difference in raw accuracy. When the
   models are identifiable as Full and SFT, this uses Full minus SFT.
 - `goal2_carry_column_facets.png`: outgoing-carry decoding over layers, faceted
   by target column.
@@ -447,7 +605,25 @@ The figure command organizes Goal 2 plots into subdirectories under
 two-model delta heatmaps, layer trajectories, and timing curves:
 
 - `linear_probe_delta_heatmap_<model_a>_minus_<model_b>_<target>.png`:
-  per-target layer-by-location difference in accuracy above majority baseline.
+  per-target layer-by-location difference in raw accuracy.
+
+`figures/inference/` contains fixed-layer, paired model comparisons for
+outgoing-carry probes:
+
+- `paired_bootstrap_balanced_accuracy_delta_outgoing_carry_<prompt_mode>_<n>digits.png`:
+  layer profiles of the paired balanced-accuracy difference, faceted by carry
+  column. Answer-digit results include only rows whose answer position matches
+  the probed carry column.
+
+Exact Full-minus-SFT values and percentile 95% intervals from 1,000 paired
+`problem_id` cluster-bootstrap resamples are stored in
+`probe_bootstrap_metrics.jsonl`. Rows remain separate by prompt mode, digit
+length, target column, token location, and layer.
+
+The bootstrap compares only problem IDs available for both models. If one
+model has capped generations, the resulting free-CoT estimand is therefore
+conditional on the shared uncapped subset; use an uncensored run for a full
+population comparison.
 
 Probe heatmaps intentionally omit numeric cell annotations because the expanded
 per-column target set makes annotated cells too busy for paper figures.

@@ -1,0 +1,51 @@
+name: goal3_olmo3_natural_cot
+source_goal2_run_dir: runs/runpod/goal2_olmo3_real_standard_only-2026-07-09T025657.008067Z0000
+source_dataset_path: data/generated/goal2_paper_standard_only/examples.jsonl
+output_dir: data/generated
+schema_version: goal3.natural_cot.v2
+splits:
+  - test_probe
+models:
+  - olmo3-instruct-sft
+  - olmo3-instruct-full
+digit_lengths:
+  - 2
+  - 4
+prompt_modes:
+  - free_cot
+digit_formats:
+  - standard
+answer_formats:
+  - standard
+require_shared_models: true
+include_token_limit_hits: false
+replay:
+  enabled: true
+  locations:
+    - prompt_final
+    - cot_1_3
+    - cot_2_3
+    - cot_end
+  crossed_models: true
+  tokenizer_id: allenai/Olmo-3-7B-Instruct
+  tokenizer_revision: null
+  tokenizer_local_files_only: false
+  max_token_alignment_shift: 2
+residual:
+  enabled: true
+  targets:
+    - incoming_carry
+  locations:
+    - prompt_final
+    - cot_2_3
+    - cot_end
+  layers:
+    - 8
+    - 16
+    - 24
+  direction_train_split: train_probe
+  target_columns_by_target:
+    incoming_carry:
+      2: [1]
+      4: [1, 2]
+  require_stable_outgoing_carry: true

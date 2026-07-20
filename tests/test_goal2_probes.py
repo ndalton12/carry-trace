@@ -5,7 +5,13 @@ import torch
 import yaml
 
 from carry_trace.config import load_goal2_probe_config
-from carry_trace.enums import ProbeTarget
+from carry_trace.enums import ProbeTarget, PromptMode
+from carry_trace.goal2_probe_analysis import (
+    GOAL2_BOOTSTRAP_METRICS_FILENAME,
+    GOAL2_FIGURE_METRICS_FILENAME,
+    GOAL2_SHARED_SLICE_METRICS_FILENAME,
+    GOAL2_SLICE_METRICS_FILENAME,
+)
 from carry_trace.goal2_probes import _ambiguous_digit_location_indexes, run_goal2_probes
 from carry_trace.io import read_jsonl, write_jsonl
 
@@ -20,6 +26,7 @@ def test_goal2_probe_config_loads_targets(tmp_path: Path) -> None:
                 "goal2_run_dir": "runs/goal2",
                 "train_split": "train_probe",
                 "test_split": "test_probe",
+                "prompt_modes": ["answer_only"],
                 "targets": ["any_carry", "outgoing_carry"],
             }
         ),
@@ -29,6 +36,7 @@ def test_goal2_probe_config_loads_targets(tmp_path: Path) -> None:
     config = load_goal2_probe_config(config_path)
 
     assert config.targets == [ProbeTarget.ANY_CARRY, ProbeTarget.OUTGOING_CARRY]
+    assert config.prompt_modes == [PromptMode.ANSWER_ONLY]
     assert config.require_unambiguous_digit_tokens is False
     assert config.n_jobs == 1
 
@@ -61,7 +69,12 @@ def test_run_goal2_probes_filters_token_limits_and_ambiguous_digit_tokens(
     predictions = pd.DataFrame(read_jsonl(probe_dir / "probe_predictions.jsonl"))
 
     assert "ex-capped" not in set(predictions["example_id"])
+    assert set(predictions["problem_id"]) == set(predictions["example_id"])
     assert "target_column_lsd" in predictions.columns
+    assert read_jsonl(probe_dir / GOAL2_SLICE_METRICS_FILENAME)
+    assert read_jsonl(probe_dir / GOAL2_SHARED_SLICE_METRICS_FILENAME)
+    assert read_jsonl(probe_dir / GOAL2_FIGURE_METRICS_FILENAME)
+    assert read_jsonl(probe_dir / GOAL2_BOOTSTRAP_METRICS_FILENAME) == []
     assert (
         metrics[
             (metrics["status"] == "fitted")
@@ -105,6 +118,31 @@ def test_run_goal2_probes_uses_cot_locations_only_for_free_cot(tmp_path: Path) -
 
     assert "cot_start" not in set(metrics["location_kind"])
     assert "prompt_final" in set(metrics["location_kind"])
+
+
+def test_run_goal2_probes_filters_configured_prompt_modes(tmp_path: Path) -> None:
+    """Verify probe runs can restrict fitting to a requested prompt mode."""
+    goal2_run_dir = _write_probe_activation_run(tmp_path, prompt_mode="free_cot")
+    config_path = tmp_path / "probe.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "probe",
+                "goal2_run_dir": str(goal2_run_dir),
+                "output_dir": str(tmp_path / "probes"),
+                "prompt_modes": ["answer_only"],
+                "targets": ["any_carry"],
+                "min_train_examples": 2,
+                "min_test_examples": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    probe_dir = run_goal2_probes(load_goal2_probe_config(config_path))
+
+    assert read_jsonl(probe_dir / "probe_metrics.jsonl") == []
+    assert read_jsonl(probe_dir / "probe_predictions.jsonl") == []
 
 
 def test_run_goal2_probes_can_exclude_ambiguous_digit_tokens(tmp_path: Path) -> None:
